@@ -17,6 +17,7 @@
 #define OUICHEFS_MAX_FILESIZE (1 << 22) /* 4 MiB */
 #define OUICHEFS_FILENAME_LEN 28
 #define OUICHEFS_MAX_SUBFILES 128
+#define OUICHEFS_SLICE_SIZE 128
 
 /*
  * ouiche_fs partition layout
@@ -75,6 +76,8 @@ struct ouichefs_sb_info {
 
 	unsigned long *ifree_bitmap; /* In-memory free inodes bitmap */
 	unsigned long *bfree_bitmap; /* In-memory free blocks bitmap */
+
+	uint32_t s_free_sliced_blocks; /* Number of the first free sliced block (0 if there is none) */
 };
 
 struct ouichefs_file_index_block {
@@ -87,6 +90,13 @@ struct ouichefs_dir_block {
 		char filename[OUICHEFS_FILENAME_LEN];
 	} files[OUICHEFS_MAX_SUBFILES];
 };
+
+/* sliced block getters */
+#define OUICHEFS_SLICED_BLOCK_GET_NR(osb) \
+	((osb)->bitmap >> 5) /* Get the number of the slice */
+
+#define OUICHEFS_SLICED_BLOCK_GET_SLICE(osb) \
+	((osb)->bitmap & 0b11111) /* Get the slice in the block */
 
 /* superblock functions */
 int ouichefs_fill_super(struct super_block *sb, void *data, int silent);
