@@ -181,6 +181,7 @@ static void ouichefs_put_super(struct super_block *sb)
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 
 	if (sbi) {
+        ouichefs_unregister_sysfs(sb);
 		kfree(sbi->ifree_bitmap);
 		kfree(sbi->bfree_bitmap);
 		kfree(sbi);
@@ -272,6 +273,7 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->nr_bfree_blocks = le32_to_cpu(csb->nr_bfree_blocks);
 	sbi->nr_free_inodes = le32_to_cpu(csb->nr_free_inodes);
 	sbi->nr_free_blocks = le32_to_cpu(csb->nr_free_blocks);
+    sbi->s_sb = sb;
 	sb->s_fs_info = sbi;
 
 	brelse(bh);
@@ -343,8 +345,16 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 		goto free_bfree;
 	}
 
+    ret = ouichefs_register_sysfs(sb);
+    if (ret) {
+        goto free_root;
+    }
+
+
 	return 0;
 
+free_root:
+    dput(sb->s_root);
 free_bfree:
 	kfree(sbi->bfree_bitmap);
 free_ifree:

@@ -78,6 +78,9 @@ struct ouichefs_sb_info {
 	unsigned long *bfree_bitmap; /* In-memory free blocks bitmap */
 
 	uint32_t s_free_sliced_blocks; /* Number of the first free sliced block (0 if there is none) */
+    
+    struct kobject s_kobj; /* sysfs kobject */
+    struct super_block *s_sb; /* Containing super_block reference  TODO: is this okay? */
 };
 
 struct ouichefs_file_index_block {
@@ -110,6 +113,12 @@ struct inode *ouichefs_iget(struct super_block *sb, unsigned long ino);
 extern const struct file_operations ouichefs_file_ops;
 extern const struct file_operations ouichefs_dir_ops;
 extern const struct address_space_operations ouichefs_aops;
+
+/* sysfs */
+extern int ouichefs_register_sysfs(struct super_block *sb);
+extern void ouichefs_unregister_sysfs(struct super_block *sb);
+extern int __init ouichefs_init_sysfs(void);
+extern void ouichefs_exit_sysfs(void);
 
 /* Getters for superbock and inode */
 #define OUICHEFS_SB(sb) (sb->s_fs_info)
