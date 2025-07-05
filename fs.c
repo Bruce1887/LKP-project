@@ -17,7 +17,7 @@
  * Mount a ouiche_fs partition
  */
 struct dentry *ouichefs_mount(struct file_system_type *fs_type, int flags,
-			      const char *dev_name, void *data)
+				  const char *dev_name, void *data)
 {
 	struct dentry *dentry = NULL;
 
@@ -54,11 +54,11 @@ static int __init ouichefs_init(void)
 {
 	int ret;
 
-    ret = ouichefs_init_sysfs();
-    if (ret) {
+	ret = ouichefs_init_sysfs();
+	if (ret) {
 		pr_err("sysfs init failed\n");
 		goto err;
-    }
+	}
 
 	ret = ouichefs_init_inode_cache();
 	if (ret) {
@@ -78,7 +78,7 @@ static int __init ouichefs_init(void)
 err_inode:
 	ouichefs_destroy_inode_cache();
 err_sysfs:
-    ouichefs_exit_sysfs();
+	ouichefs_exit_sysfs();
 err:
 	return ret;
 }
@@ -92,8 +92,8 @@ static void __exit ouichefs_exit(void)
 		pr_err("unregister_filesystem() failed\n");
 
 	ouichefs_destroy_inode_cache();
-    
-    ouichefs_exit_sysfs();
+
+	ouichefs_exit_sysfs();
 
 	pr_info("module unloaded\n");
 }

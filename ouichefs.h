@@ -31,8 +31,8 @@
  * +---------------+
  * | bfree bitmap  |  sb->nr_bfree_blocks blocks
  * +---------------+
- * |    data       |
- * |      blocks   |  rest of the blocks
+ * |	data	   |
+ * |	  blocks   |  rest of the blocks
  * +---------------+
  *
  */
@@ -78,9 +78,9 @@ struct ouichefs_sb_info {
 	unsigned long *bfree_bitmap; /* In-memory free blocks bitmap */
 
 	uint32_t s_free_sliced_blocks; /* Number of the first free sliced block (0 if there is none) */
-    
-    struct kobject s_kobj; /* sysfs kobject */
-    struct super_block *s_sb; /* Containing super_block reference  TODO: is this okay? */
+
+	struct kobject s_kobj; /* sysfs kobject */
+	struct super_block *s_sb; /* Containing super_block reference  TODO: is this okay? */
 };
 
 struct ouichefs_file_index_block {

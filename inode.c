@@ -98,7 +98,7 @@ failed:
  * Returns NULL on success.
  */
 static struct dentry *ouichefs_lookup(struct inode *dir, struct dentry *dentry,
-				      unsigned int flags)
+					  unsigned int flags)
 {
 	struct super_block *sb = dir->i_sb;
 	struct ouichefs_inode_info *ci_dir = OUICHEFS_INODE(dir);
@@ -124,7 +124,7 @@ static struct dentry *ouichefs_lookup(struct inode *dir, struct dentry *dentry,
 		if (!f->inode)
 			break;
 		if (!strncmp(f->filename, dentry->d_name.name,
-			     OUICHEFS_FILENAME_LEN)) {
+				 OUICHEFS_FILENAME_LEN)) {
 			inode = ouichefs_iget(sb, le32_to_cpu(f->inode));
 			break;
 		}
@@ -207,10 +207,10 @@ put_ino:
 
 /*
  * Create a file or directory in this way:
- *   - check filename length and if the parent directory is not full
- *   - create the new inode (allocate inode and blocks)
- *   - cleanup index block of the new inode
- *   - add new file/directory in parent index
+ *	 - check filename length and if the parent directory is not full
+ *	 - create the new inode (allocate inode and blocks)
+ *	 - cleanup index block of the new inode
+ *	 - add new file/directory in parent index
  */
 static int ouichefs_create(struct mnt_idmap *idmap, struct inode *dir,
 			   struct dentry *dentry, umode_t mode, bool excl)
@@ -295,10 +295,10 @@ end:
 
 /*
  * Remove a link for a file. If link count is 0, destroy file in this way:
- *   - remove the file from its parent directory.
- *   - cleanup blocks containing data
- *   - cleanup file index block
- *   - cleanup inode
+ *	 - remove the file from its parent directory.
+ *	 - cleanup blocks containing data
+ *	 - cleanup file index block
+ *	 - cleanup inode
  */
 static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 {
@@ -361,7 +361,7 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 		if (!file_block->blocks[i])
 			continue;
 
-    bh2 = sb_bread(sb, le32_to_cpu(file_block->blocks[i]));
+	bh2 = sb_bread(sb, le32_to_cpu(file_block->blocks[i]));
 		if (!bh2)
 			goto put_block;
 		block = (char *)bh2->b_data;
@@ -430,13 +430,13 @@ static int ouichefs_rename(struct mnt_idmap *idmap, struct inode *old_dir,
 		/* if old_dir == new_dir, save the renamed file position */
 		if (new_dir == old_dir) {
 			if (strncmp(dir_block->files[i].filename,
-				    old_dentry->d_name.name,
-				    OUICHEFS_FILENAME_LEN) == 0)
+					old_dentry->d_name.name,
+					OUICHEFS_FILENAME_LEN) == 0)
 				f_pos = i;
 		}
 		if (strncmp(dir_block->files[i].filename,
-			    new_dentry->d_name.name,
-			    OUICHEFS_FILENAME_LEN) == 0) {
+				new_dentry->d_name.name,
+				OUICHEFS_FILENAME_LEN) == 0) {
 			ret = -EEXIST;
 			goto relse_new;
 		}
