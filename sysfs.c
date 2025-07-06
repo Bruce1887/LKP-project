@@ -1,4 +1,5 @@
 #include <linux/fs.h>
+#include <linux/kernel.h>
 #include <linux/kobject.h>
 #include "ouichefs.h"
 
@@ -20,6 +21,10 @@ static loff_t total_data_size(struct ouichefs_sb_info *sbi)
 	// TODO: lock?
 	for (int i = 0; i < sbi->nr_blocks; i++) {
 		struct inode *inode = ouichefs_iget(sbi->s_sb, i);
+		if (!inode) {
+			pr_err("%s: failed to read inode\n", __func__);
+		}
+
 		size += inode->i_size;
 	}
 
