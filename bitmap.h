@@ -69,7 +69,7 @@ static inline uint32_t get_free_block(struct ouichefs_sb_info *sbi)
  * Mark the i-th bit in freemap as free (i.e. 1)
  */
 static inline int put_free_bit(unsigned long *freemap, unsigned long size,
-				   uint32_t i)
+			       uint32_t i)
 {
 	/* i is greater than freemap size */
 	if (i > size)

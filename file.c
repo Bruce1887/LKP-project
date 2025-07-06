@@ -336,6 +336,23 @@ out:
 	return ret;
 }
 
+static struct buffer_head* init_slice_block(struct super_block *sb, uint32_t block) {
+	uint32_t physical_block = le32_to_cpu(block);
+	struct buffer_head *bh_data = sb_bread(sb, physical_block);
+	if (!bh_data) {
+		return NULL;
+	}
+
+	/* initialie metadata */
+	bh_data->b_data[0] = (char)~(0b1 << 7);
+	bh_data->b_data[1] = (char)~0;
+	bh_data->b_data[2] = (char)~0;
+	bh_data->b_data[3] = (char)~0;
+	pr_info("bh_data[0]: %c", bh_data->b_data[0]);
+
+	return bh_data;
+}
+
 static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
 	pr_info("%s: pos=%lld, count=%zu\n", __func__, iocb->ki_pos,
@@ -369,6 +386,8 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	pr_info("%s: old_size=%lld, new_size=%lld\n", __func__, old_size,
 		new_size);
 
+	pr_info("%s: inode.index_block: %u\n", __func__, ci->index_block);
+
 	/* TODO: Check if we want to wite a small or a big file (more/less than 128 bytes)
 	Writing big files is already implemented.
 	Writing small files requires first checking sbi->s_free_sliced_blocks to see if there already is a partially filled block.
@@ -380,19 +399,74 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	After this there will be a number indicating the next partially filled block.
 	*/
 
-	// if (new_size <= OUICHEFS_SLICE_SIZE) {
-	//	/* We want to write a Small file */
-	//	if (sbi->s_free_sliced_blocks == 0) {
-	//		/* No sliced blocks available, allocate a new one */
-	//		uint32_t sliced_block = get_free_block(sbi);
-	//		if (!sliced_block) {
-	//			return -ENOSPC;
-	//		}
-	//		sbi->s_free_sliced_blocks = sliced_block;
-	//	} else {
-	//		/* There is a sliced block already, lets write to it */
-	//	}
-	// }
+	if (new_size <= OUICHEFS_SLICE_SIZE ) {
+		uint32_t sliced_block = sbi->s_free_sliced_blocks;
+		/* We want to write a Small file */
+		if (sbi->s_free_sliced_blocks == 0) {
+			/* No sliced blocks available, allocate a new one */
+			sliced_block = get_free_block(sbi);
+			if (!sliced_block || sliced_block > 1 << 27) {
+				return -ENOSPC;
+			}
+
+			sbi->s_free_sliced_blocks = sliced_block;
+			bh_data = init_slice_block(sb, sliced_block);
+		} else {
+			bh_data = sb_bread(sb, sliced_block);
+			if (!bh_data) {
+				ret = -EIO;
+				goto out;
+			}
+		}
+
+		uint32_t first_empty_slice = get_first_free_bit((unsigned long*)bh_data->b_data, sizeof(uint32_t));
+
+		if(!first_empty_slice) {
+			sliced_block = get_free_block(sbi);
+			if (!sliced_block || sliced_block > 1 << 27) {
+				return -ENOSPC;
+			}
+
+			/* Save index of the new block */
+			((uint32_t*) bh_data->b_data)[1] = sliced_block;
+			mark_buffer_dirty(bh_data);
+			sync_dirty_buffer(bh_data);
+
+			brelse(bh_data);
+			bh_data = NULL;
+			
+			bh_data = init_slice_block(sb, sliced_block);
+
+			/* first slice is now empty so we use it */
+			first_empty_slice = 1;
+		} 
+
+		size_t to_write = count;
+		size_t offset = first_empty_slice * OUICHEFS_SLICE_SIZE;
+
+		if (copy_from_iter(bh_data->b_data + offset, to_write,
+				   from) != to_write) {
+			brelse(bh_data);
+			ret = -EFAULT;
+			goto out;
+		}
+
+		mark_buffer_dirty(bh_data);
+		sync_dirty_buffer(bh_data);
+		brelse(bh_data);
+		bh_data = NULL;
+
+		pos += to_write;
+		count -= to_write;
+		copied += to_write;
+
+		iocb->ki_pos = pos;
+		ret = copied;
+
+		/* update information */
+		goto out;
+	}
+
 	/* Calculate required blocks for file (size > 128 bytes) */
 	nr_allocs = DIV_ROUND_UP(new_size, OUICHEFS_BLOCK_SIZE);
 
