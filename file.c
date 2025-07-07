@@ -121,7 +121,7 @@ static int ouichefs_write_begin(struct file *file,
 	/* if this failed, reclaim newly allocated blocks */
 	if (err < 0) {
 		pr_err("%s:%d: newly allocated blocks reclaim not implemented yet\n",
-			   __func__, __LINE__);
+		       __func__, __LINE__);
 	}
 	return err;
 }
@@ -132,8 +132,8 @@ static int ouichefs_write_begin(struct file *file,
  * necessary.
  */
 static int ouichefs_write_end(struct file *file, struct address_space *mapping,
-				  loff_t pos, unsigned int len, unsigned int copied,
-				  struct page *page, void *fsdata)
+			      loff_t pos, unsigned int len, unsigned int copied,
+			      struct page *page, void *fsdata)
 {
 	pr_info("%s:%d: pos=%lld, len=%u\n", __func__, __LINE__, pos, len);
 	int ret;
@@ -145,7 +145,7 @@ static int ouichefs_write_end(struct file *file, struct address_space *mapping,
 	ret = generic_write_end(file, mapping, pos, len, copied, page, fsdata);
 	if (ret < len) {
 		pr_err("%s:%d: wrote less than asked... what do I do? nothing for now...\n",
-			   __func__, __LINE__);
+		       __func__, __LINE__);
 	} else {
 		uint32_t nr_blocks_old = inode->i_blocks;
 
@@ -169,15 +169,15 @@ static int ouichefs_write_end(struct file *file, struct address_space *mapping,
 			bh_index = sb_bread(sb, ci->index_block);
 			if (!bh_index) {
 				pr_err("failed truncating '%s'. we just lost %llu blocks\n",
-					   file->f_path.dentry->d_name.name,
-					   nr_blocks_old - inode->i_blocks);
+				       file->f_path.dentry->d_name.name,
+				       nr_blocks_old - inode->i_blocks);
 				goto end;
 			}
 			index = (struct ouichefs_file_index_block *)
 					bh_index->b_data;
 
 			for (i = inode->i_blocks - 1; i < nr_blocks_old - 1;
-				 i++) {
+			     i++) {
 				put_block(OUICHEFS_SB(sb),
 					  le32_to_cpu(index->blocks[i]));
 				index->blocks[i] = 0;
@@ -233,12 +233,10 @@ static int ouichefs_open(struct inode *inode, struct file *file)
 
 static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 {
-	pr_info("%s: pos=%lld, count=%zu\n", __func__, iocb->ki_pos,
-		iov_iter_count(to));
-
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file_inode(file);
 	struct super_block *sb = inode->i_sb;
+	// struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 	struct ouichefs_file_index_block *index;
 	struct buffer_head *bh_index = NULL, *bh_data = NULL;
@@ -247,11 +245,15 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	ssize_t ret = 0;
 	ssize_t copied = 0;
 
-	/* Check if read position is beyond file size */
-	if (pos >= inode->i_size)
-		return 0;
-
+	pr_info("START. inode->index_block=%u\n", ci->index_block);
 	pr_info("%s: pos=%lld, count=%zu\n", __func__, pos, count);
+
+	/* Check if read position is beyond file size */
+	if (pos >= inode->i_size) {
+		pr_info("pos is beyond file size, returning 0\n");
+		return 0;
+	}
+
 	/* Limit read to file size */
 	if (pos + count > inode->i_size)
 		count = inode->i_size - pos;
@@ -263,6 +265,15 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 		Reading big files is implemented already using index blocks,
 		Small files will be read from a sliced block.
 	*/
+
+	/* Check if index block has NOT yet been set */
+	if (ci->index_block == 0) {
+		/* We should never reach this. If trying to read a file that has not had any data written to it,
+		that case should be caught when checking the read position vs the file size previously in this function.
+		*/
+		pr_err("index_block == 0, this should not happen!\n");
+		return 0;
+	}
 
 	/* Read index block from disk */
 	bh_index = sb_bread(sb, ci->index_block);
@@ -300,7 +311,7 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 			bh_data = sb_bread(sb, physical_block);
 			if (!bh_data) {
 				pr_err("%s: failed to read data block %u\n",
-					   __func__, physical_block);
+				       __func__, physical_block);
 				ret = -EIO;
 				goto out;
 			}
@@ -336,7 +347,9 @@ out:
 	return ret;
 }
 
-static struct buffer_head* init_slice_block(struct super_block *sb, uint32_t block) {
+static struct buffer_head *init_slice_block(struct super_block *sb,
+					    uint32_t block)
+{
 	uint32_t physical_block = le32_to_cpu(block);
 	struct buffer_head *bh_data = sb_bread(sb, physical_block);
 	if (!bh_data) {
@@ -381,6 +394,40 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			return -ENOSPC;
 	}
 
+	/* Check if index block has NOT yet been set */
+	if (ci->index_block == 0) {
+		if (inode->i_size <= OUICHEFS_SLICE_SIZE) {
+			/* This is a small file that has not yet been added to a partially filled block
+			   Try to find a slice for it.
+			*/
+			if (sbi->s_free_sliced_blocks == 0) {
+				/* No sliced blocks available, allocate a new one */
+				uint32_t free_block = get_free_block(sbi);
+				
+				
+			} else {
+				/* Use existing sliced block */
+				bh_data = sb_bread(sb, sbi->s_free_sliced_blocks);
+				if (!bh_data) {
+					pr_err("Failed to read sliced block\n");
+					put_inode(sbi, ci->vfs_inode.i_ino);
+					return -EIO;
+				}
+				
+			}
+
+		} else {
+			/* Allocate an index block for this large-file */
+			__le32 bno = get_free_block(sbi);
+			if (!bno) {
+				pr_err("Failed to allocate index block\n");
+				put_inode(sbi, ci->vfs_inode.i_ino);
+				return ENOSPC;
+			}
+			ci->index_block = bno;
+		}
+	}
+
 	/* Calculate new file size and required blocks */
 	new_size = max((loff_t)(pos + count), old_size);
 	pr_info("%s: old_size=%lld, new_size=%lld\n", __func__, old_size,
@@ -399,7 +446,7 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	After this there will be a number indicating the next partially filled block.
 	*/
 
-	if (new_size <= OUICHEFS_SLICE_SIZE ) {
+	if (new_size <= OUICHEFS_SLICE_SIZE) {
 		uint32_t sliced_block = sbi->s_free_sliced_blocks;
 		/* We want to write a Small file */
 		if (sbi->s_free_sliced_blocks == 0) {
@@ -419,33 +466,34 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			}
 		}
 
-		uint32_t first_empty_slice = get_first_free_bit((unsigned long*)bh_data->b_data, sizeof(uint32_t));
+		uint32_t first_empty_slice = get_first_free_bit(
+			(unsigned long *)bh_data->b_data, sizeof(uint32_t));
 
-		if(!first_empty_slice) {
+		if (!first_empty_slice) {
 			sliced_block = get_free_block(sbi);
 			if (!sliced_block || sliced_block > 1 << 27) {
 				return -ENOSPC;
 			}
 
 			/* Save index of the new block */
-			((uint32_t*) bh_data->b_data)[1] = sliced_block;
+			((uint32_t *)bh_data->b_data)[1] = sliced_block;
 			mark_buffer_dirty(bh_data);
 			sync_dirty_buffer(bh_data);
 
 			brelse(bh_data);
 			bh_data = NULL;
-			
+
 			bh_data = init_slice_block(sb, sliced_block);
 
 			/* first slice is now empty so we use it */
 			first_empty_slice = 1;
-		} 
+		}
 
 		size_t to_write = count;
 		size_t offset = first_empty_slice * OUICHEFS_SLICE_SIZE;
 
-		if (copy_from_iter(bh_data->b_data + offset, to_write,
-				   from) != to_write) {
+		if (copy_from_iter(bh_data->b_data + offset, to_write, from) !=
+		    to_write) {
 			brelse(bh_data);
 			ret = -EFAULT;
 			goto out;
@@ -534,10 +582,10 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 					gap_start % OUICHEFS_BLOCK_SIZE;
 				size_t gap_size =
 					min(gap_end - gap_start,
-						(loff_t)(OUICHEFS_BLOCK_SIZE -
-							 gap_offset));
+					    (loff_t)(OUICHEFS_BLOCK_SIZE -
+						     gap_offset));
 				memset(bh_data->b_data + gap_offset, 0,
-					   gap_size);
+				       gap_size);
 			}
 		}
 

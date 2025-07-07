@@ -146,7 +146,7 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 	struct ouichefs_inode_info *ci;
 	struct super_block *sb;
 	struct ouichefs_sb_info *sbi;
-	uint32_t ino, bno;
+	uint32_t ino; //, bno;
 	int ret;
 
 	/* Check mode before doing anything to avoid undoing everything */
@@ -172,13 +172,21 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 	}
 	ci = OUICHEFS_INODE(inode);
 
+	/* #### OLD CODE #### */
 	/* Get a free block for this new inode's index */
-	bno = get_free_block(sbi);
-	if (!bno) {
-		ret = -ENOSPC;
-		goto put_inode;
-	}
-	ci->index_block = bno;
+	// bno = get_free_block(sbi);
+	// if (!bno) {	
+	// 	ret = -ENOSPC;
+	// 	goto put_inode;
+	// }
+	// ci->index_block = bno;
+	
+	/* #### NEW CODE #### */
+	/* We set the index block of the inode when writing to the file instead of when creating the Inode*/
+	ci->index_block = 0;
+
+	pr_info("Creating inode %lu with mode %o in dir %lu. Inode->index_block=%u\n",
+		inode->i_ino, mode, dir->i_ino, ci->index_block);
 
 	/* Initialize inode */
 	inode_init_owner(&nop_mnt_idmap, inode, dir, mode);
@@ -197,8 +205,9 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 
 	return inode;
 
-put_inode:
-	iput(inode);
+// put_inode:
+// 	iput(inode);
+
 put_ino:
 	put_inode(sbi, ino);
 
