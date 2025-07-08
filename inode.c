@@ -185,9 +185,6 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 	/* We set the index block of the inode when writing to the file instead of when creating the Inode*/
 	ci->index_block = 0;
 
-	pr_info("Creating inode %lu with mode %o in dir %lu. Inode->index_block=%u\n",
-		inode->i_ino, mode, dir->i_ino, ci->index_block);
-
 	/* Initialize inode */
 	inode_init_owner(&nop_mnt_idmap, inode, dir, mode);
 	inode->i_blocks = 1;

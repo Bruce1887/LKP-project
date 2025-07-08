@@ -80,7 +80,8 @@ struct ouichefs_sb_info {
 	uint32_t s_free_sliced_blocks; /* Number of the first free sliced block (0 if there is none) */
 
 	struct kobject s_kobj; /* sysfs kobject */
-	struct super_block *s_sb; /* Containing super_block reference  TODO: is this okay? */
+	struct super_block *
+		s_sb; /* Containing super_block reference  TODO: is this okay? */
 };
 
 struct ouichefs_file_index_block {
@@ -94,12 +95,35 @@ struct ouichefs_dir_block {
 	} files[OUICHEFS_MAX_SUBFILES];
 };
 
-/* sliced block getters */
-#define OUICHEFS_SLICED_BLOCK_GET_NR(osb) \
-	((osb)->bitmap >> 5) /* Get the number of the slice */
+#define OUICHEFS_BITMASK_SIZE_BITS (sizeof(uint32_t) * 8)
 
-#define OUICHEFS_SLICED_BLOCK_GET_SLICE(osb) \
-	((osb)->bitmap & 0b11111) /* Get the slice in the block */
+/* Finds the first set bit (1) out of the first 32 bits and clears it (0). 
+   Bit 0 is the first bit and is always 0, and can this be used to indicate 
+   that no free bit was found. */
+#define OUICHEFS_GET_FIRST_FREE_BIT(bh) \
+	get_first_free_bit((unsigned long *)bh->b_data, (OUICHEFS_BITMASK_SIZE_BITS))
+
+/* Sliced block superblock getters/setters */
+#define OUICHEFS_SLICED_BLOCK_SB_BITMAP(bh) (*((uint32_t *)((bh)->b_data)))
+
+#define OUICHEFS_SLICED_BLOCK_SB_SET_BITMAP(bh, val) \
+	(*((uint32_t *)((bh)->b_data)) = (val))
+
+#define OUICHEFS_SLICED_BLOCK_SB_NEXT(bh) (*((uint32_t *)((bh)->b_data + 4)))
+
+#define OUICHEFS_SLICED_BLOCK_SB_SET_NEXT(bh, val) \
+	(*((uint32_t *)((bh)->b_data + 4)) = (val))
+
+#define OUICHEFS_SLICED_BLOCK_GET_SLICE(bh, index) \
+	(*((uint32_t *)((bh)->b_data + index * OUICHEFS_SLICE_SIZE)))
+
+/* small file index_block getters */
+#define OUICHEFS_SMALL_FILE_GET_BNO(inode) \
+	((inode->index_block) >> 5) /* Get the number of the block (27 bits)*/
+
+#define OUICHEFS_SMALL_FILE_GET_SLICE(inode) \
+	((inode->index_block) &                     \
+	 0b11111) /* Get the slice in the block (5 bits to identify 32 slices)*/
 
 /* superblock functions */
 int ouichefs_fill_super(struct super_block *sb, void *data, int silent);
