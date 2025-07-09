@@ -246,9 +246,8 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	ssize_t ret = 0;
 	ssize_t copied = 0;
 
-	pr_info("START. inode->index_block=%u\n", ci->index_block);
 	pr_info("%s: pos=%lld, count=%zu\n", __func__, pos, count);
-
+	pr_info("inode->i_size=%lld\n", inode->i_size);
 	/* Check if read position is beyond file size */
 	if (pos >= inode->i_size) {
 		pr_info("pos is beyond file size, returning 0\n");
@@ -275,6 +274,54 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 		pr_err("index_block == 0, this should not happen!\n");
 		return 0;
 	}
+
+	if (inode->i_size <= OUICHEFS_SLICE_SIZE) {
+		pr_info("Reading small file\n");
+	} else {
+		pr_info("Reading big file\n");
+		goto BIG_FILE;
+	}
+
+	uint32_t bno = OUICHEFS_SMALL_FILE_GET_BNO(ci);
+	uint32_t slice_no = OUICHEFS_SMALL_FILE_GET_SLICE(ci);
+
+	bh_data = sb_bread(sb, bno);
+	if (!bh_data) {
+		pr_err("Failed to read sliced block %u\n", bno);
+		ret = -EIO;
+		goto out;
+	}
+
+	pr_info("Reading small file: bno=%u, slice_no=%u\n", bno, slice_no);
+
+	/* Check if slice_no is valid */
+	if (slice_no == 0 ||
+	    slice_no >= OUICHEFS_SLICE_SIZE / sizeof(uint32_t)) {
+		pr_err("Slice number %u out of range\n", slice_no);
+		ret = -EIO;
+		brelse(bh_data);
+		goto out;
+	}
+
+	pr_info("bitmap before: %u\n",
+		OUICHEFS_SLICED_BLOCK_SB_BITMAP(bh_data));
+
+	/* Copy data from user space */
+	if (copy_to_iter(bh_data->b_data + slice_no * OUICHEFS_SLICE_SIZE,
+			 count, to) != count) {
+		brelse(bh_data);
+		ret = -EFAULT;
+		goto out;
+	}
+
+	/* Update file position */
+	/* We can always read the entire file if we wish to if its a small file, 
+	thus "pos" is unnecessary here and we just set position to count */
+	iocb->ki_pos = count;
+	ret = count;
+
+	goto out;
+BIG_FILE:
 
 	/* Read index block from disk */
 	bh_index = sb_bread(sb, ci->index_block);
@@ -340,6 +387,10 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	ret = copied;
 
 out:
+	pr_info("at out section\n");
+	pr_info("bh_index: %p, bh_data: %p, ret: %ld\n", bh_index, bh_data,
+		ret);
+
 	if (bh_index)
 		brelse(bh_index);
 	if (bh_data)
@@ -443,7 +494,7 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			sbi->s_free_sliced_blocks = (uint32_t)block_to_write;
 			pr_info("Allocated new sliced block: %u\n",
 				block_to_write);
-			
+
 		} else {
 			/* There already is a sliced block, read it. */
 			block_to_write = sbi->s_free_sliced_blocks;
@@ -521,8 +572,7 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 				bh_index = NULL;
 			}
 		}
-	}
-	else {
+	} else {
 		/* This is a small file that has already been added to a partially filled block.
 			We can use the index_block field to find the block and slice to write to. */
 		pr_info("This is a small file that has already been added to a sliced block.\n");
@@ -575,11 +625,11 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	pr_info("wrote %zd bytes at pos %lld\n", count, pos);
 
 	/* Update inode metadata */
-	if (pos > inode->i_size) {
-		inode->i_size = pos;
+	if (count > inode->i_size) {
+		inode->i_size = count;
 	}
 	inode->i_mtime = inode->i_ctime = current_time(inode);
-	
+
 	ci->index_block = (block_to_write << 5) + slice_to_write;
 	mark_inode_dirty(inode);
 
@@ -724,7 +774,7 @@ BIG_FILE:
 out:
 
 	pr_info("at out section\n");
-	pr_info("bh_index: %p, bh_data: %p\n, ret: %ld", bh_index, bh_data,
+	pr_info("bh_index: %p, bh_data: %p, ret: %ld\n", bh_index, bh_data,
 		ret);
 
 	if (bh_index)

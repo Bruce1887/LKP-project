@@ -100,8 +100,9 @@ struct ouichefs_dir_block {
 /* Finds the first set bit (1) out of the first 32 bits and clears it (0). 
    Bit 0 is the first bit and is always 0, and can this be used to indicate 
    that no free bit was found. */
-#define OUICHEFS_GET_FIRST_FREE_BIT(bh) \
-	get_first_free_bit((unsigned long *)bh->b_data, (OUICHEFS_BITMASK_SIZE_BITS))
+#define OUICHEFS_GET_FIRST_FREE_BIT(bh)                 \
+	get_first_free_bit((unsigned long *)bh->b_data, \
+			   (OUICHEFS_BITMASK_SIZE_BITS))
 
 /* Sliced block superblock getters/setters */
 #define OUICHEFS_SLICED_BLOCK_SB_BITMAP(bh) (*((uint32_t *)((bh)->b_data)))
@@ -114,15 +115,12 @@ struct ouichefs_dir_block {
 #define OUICHEFS_SLICED_BLOCK_SB_SET_NEXT(bh, val) \
 	(*((uint32_t *)((bh)->b_data + 4)) = (val))
 
-#define OUICHEFS_SLICED_BLOCK_GET_SLICE(bh, index) \
-	(*((uint32_t *)((bh)->b_data + index * OUICHEFS_SLICE_SIZE)))
-
 /* small file index_block getters */
 #define OUICHEFS_SMALL_FILE_GET_BNO(inode) \
 	((inode->index_block) >> 5) /* Get the number of the block (27 bits)*/
 
 #define OUICHEFS_SMALL_FILE_GET_SLICE(inode) \
-	((inode->index_block) &                     \
+	((inode->index_block) &              \
 	 0b11111) /* Get the slice in the block (5 bits to identify 32 slices)*/
 
 /* superblock functions */
