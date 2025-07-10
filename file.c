@@ -223,13 +223,16 @@ static int ouichefs_open(struct inode *inode, struct file *file)
 			index->blocks[iblock] = 0;
 		}
 		inode->i_size = 0;
-		inode->i_blocks = 1;
 
 		mark_buffer_dirty(bh_index);
 		brelse(bh_index);
 	}
 
 	return 0;
+}
+
+static bool is_small_file(struct inode *inode) {
+	return inode->i_blocks == 0;
 }
 
 static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
@@ -275,7 +278,7 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 		Reading big files is implemented already using index blocks,
 		Small files will be read from a sliced block.
 	*/
-	if (inode->i_size <= OUICHEFS_SLICE_SIZE) {
+	if (is_small_file(inode)) {
 		pr_info("Reading small file\n");
 	} else {
 		pr_info("Reading big file\n");
@@ -442,12 +445,8 @@ static bool is_new(uint32_t index_block) {
 }
 
 static bool will_be_small(loff_t new_size) {
-	return OUICHEFS_SLICE_SIZE <= new_size;
+	return new_size <= OUICHEFS_SLICE_SIZE;
 }
-
-// static bool was_sliced(uint32_t i_block) {
-// 	return i_block == 0;
-// }
 
 static ssize_t write_big_file(
 	struct inode *inode,
@@ -479,41 +478,29 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	loff_t old_size = inode->i_size;
 	loff_t new_size = max((loff_t)(pos + count), old_size);
 
+	pr_info("pos: %lld, flags: %d", pos, iocb->ki_flags);
+
 	if (is_new(ci->index_block)) {
 		if (will_be_small(new_size)) {
 			pr_info("using write_small_file implementation\n");
 			return write_small_file(inode, ci, sb, sbi, iocb, from);
-		}
-		else {
+		} else {
 			pr_info("using write_big_file implementation\n");
 			return write_big_file(inode, ci, sb, sbi, iocb, from);
+		}
+	} else {
+		if(!is_small_file(&ci->vfs_inode)) {
+			pr_info("using write_big_file implementation\n");
+			return write_big_file(inode, ci, sb, sbi, iocb, from);
+		} else if (will_be_small(new_size)) {
+			pr_info("using write_small_file implementation\n");
+			return write_small_file(inode, ci, sb, sbi, iocb, from);
+		} else {
+
 		}
 	}
 
 	return 0;
-//
-// 	/* Check file size limits */
-// 	if (pos + count > OUICHEFS_MAX_FILESIZE) {
-// 		count = OUICHEFS_MAX_FILESIZE - pos;
-// 		if (count <= 0)
-// 			return -ENOSPC;
-// 	}
-//
-// 	pr_info("pos=%lld, count=%zu, inode->i_size=%lld\n", (long long)pos,
-// 		count, (long long)inode->i_size);
-//
-// 	/* Check if we are writing to a small file or a big file */
-// 	if (count > OUICHEFS_SLICE_SIZE ||
-// 	    inode->i_size > OUICHEFS_SLICE_SIZE) {
-// 		pr_info("This is a big file, using index blocks\n");
-// 	} else
-// 		pr_info("This is a small file, using sliced blocks\n");
-//
-// 	if (pos > OUICHEFS_SLICE_SIZE) {
-// 		pr_err("TODO: implement support for small files spanning mutiple slices.\n");
-// 		return -EFBIG;
-// 	}
-//
 }
 
 static ssize_t write_big_file(
@@ -528,12 +515,17 @@ static ssize_t write_big_file(
 	struct buffer_head *bh_index = NULL, *bh_data = NULL;
 	size_t count = iov_iter_count(from);
 	loff_t pos = iocb->ki_pos;
+	if (iocb->ki_flags & IOCB_APPEND) {
+		pos = inode->i_size;
+	}
+
 	ssize_t ret = 0;
 	ssize_t copied = 0;
 	uint32_t nr_allocs = 0;
 	loff_t old_size = inode->i_size;
 	loff_t new_size = max((loff_t)(pos + count), old_size);
 	uint32_t old_blocks;
+
 
 	/* Check if this inode's index_block field has NOT yet been set */
 	if (ci->index_block == 0) {
@@ -691,10 +683,15 @@ static ssize_t write_small_file(
 	struct buffer_head *bh_index = NULL, *bh_data = NULL;
 	size_t count = iov_iter_count(from);
 	loff_t pos = iocb->ki_pos;
+	if (iocb->ki_flags & IOCB_APPEND) {
+		pos = inode->i_size;
+	}
 	ssize_t ret = 0;
-
 	uint32_t block_to_write = 0;
 	uint32_t slice_to_write = 0;
+	loff_t old_size = inode->i_size;
+	loff_t new_size = max((loff_t)(pos + count), old_size);
+
 	/* Check if this inode's index_block field has NOT yet been set */
 	if (ci->index_block == 0) {
 		/* This is a small file that has not yet been added to a partially filled block.
@@ -841,9 +838,7 @@ static ssize_t write_small_file(
 	pr_info("wrote %zd bytes at pos %lld\n", count, pos);
 
 	/* Update inode metadata */
-	if (count > inode->i_size) {
-		inode->i_size = count;
-	}
+	inode->i_size = new_size;
 	inode->i_mtime = inode->i_ctime = current_time(inode);
 
 	ci->index_block = (block_to_write << 5) + slice_to_write;
