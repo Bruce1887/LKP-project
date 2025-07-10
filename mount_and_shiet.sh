@@ -22,3 +22,12 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "ouichefs mounted successfully at /mnt/ouiche"
+
+
+printf 'A%.0s' {1..140} > /mnt/ouiche/medium.txt
+echo hej > /mnt/ouiche/small.txt
+
+echo "Files created in /mnt/ouiche:"
+
+# Note: will only change directories in your current shell if you source it
+cd /mnt/ouiche
