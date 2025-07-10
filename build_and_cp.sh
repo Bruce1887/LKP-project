@@ -8,6 +8,7 @@ if [ $? -ne 0 ]; then
 fi
 
 cp ouichefs.ko ../lx/share/
+cp mkfs/test.img ../lx/share/
 
 echo "Build and copy successful"
 exit 0

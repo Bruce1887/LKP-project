@@ -246,8 +246,9 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	ssize_t ret = 0;
 	ssize_t copied = 0;
 
-	pr_info("%s: pos=%lld, count=%zu\n", __func__, pos, count);
-	pr_info("inode->i_size=%lld\n", inode->i_size);
+	pr_info("pos=%lld, count=%zu, inode->i_size=%lld\n", (long long)pos,
+		count, (long long)inode->i_size);
+
 	/* Check if read position is beyond file size */
 	if (pos >= inode->i_size) {
 		pr_info("pos is beyond file size, returning 0\n");
@@ -261,11 +262,6 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	if (count == 0)
 		return 0;
 
-	/* TODO: Check if we want to read a small or a big file (more/less than 128 bytes)
-		Reading big files is implemented already using index blocks,
-		Small files will be read from a sliced block.
-	*/
-
 	/* Check if index block has NOT yet been set */
 	if (ci->index_block == 0) {
 		/* We should never reach this. If trying to read a file that has not had any data written to it,
@@ -275,6 +271,10 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 		return 0;
 	}
 
+	/* Check if we want to read a small or a big file (more/less than 128 bytes)
+		Reading big files is implemented already using index blocks,
+		Small files will be read from a sliced block.
+	*/
 	if (inode->i_size <= OUICHEFS_SLICE_SIZE) {
 		pr_info("Reading small file\n");
 	} else {
@@ -303,8 +303,7 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 		goto out;
 	}
 
-	pr_info("bitmap before: %u\n",
-		OUICHEFS_SLICED_BLOCK_SB_BITMAP(bh_data));
+	pr_info("slice bitmap: %u\n", OUICHEFS_SLICED_BLOCK_SB_BITMAP(bh_data));
 
 	/* Copy data from user space */
 	if (copy_to_iter(bh_data->b_data + slice_no * OUICHEFS_SLICE_SIZE,
@@ -463,10 +462,12 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			return -ENOSPC;
 	}
 
-	pr_info("inode->i_size=%lld, pos=%lld, count=%zu\n", inode->i_size, pos,
-		count);
+	pr_info("pos=%lld, count=%zu, inode->i_size=%lld\n", (long long)pos,
+		count, (long long)inode->i_size);
 
-	if (count > OUICHEFS_SLICE_SIZE) {
+	/* Check if we are writing to a small file or a big file */
+	if (count > OUICHEFS_SLICE_SIZE ||
+	    inode->i_size > OUICHEFS_SLICE_SIZE) {
 		pr_info("This is a big file, using index blocks\n");
 		goto BIG_FILE;
 	} else

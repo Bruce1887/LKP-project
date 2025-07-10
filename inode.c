@@ -187,7 +187,7 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 
 	/* Initialize inode */
 	inode_init_owner(&nop_mnt_idmap, inode, dir, mode);
-	inode->i_blocks = 1;
+	inode->i_blocks = 0;
 	if (S_ISDIR(mode)) {
 		inode->i_size = OUICHEFS_BLOCK_SIZE;
 		inode->i_fop = &ouichefs_dir_ops;
@@ -317,6 +317,9 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 	uint32_t ino, bno;
 	int i, f_id = -1, nr_subs = 0;
 
+	pr_info("ouichefs_unlink: unlinking '%s'\n",
+		dentry->d_name.name);
+		
 	ino = inode->i_ino;
 	bno = OUICHEFS_INODE(inode)->index_block;
 
