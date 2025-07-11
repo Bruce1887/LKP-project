@@ -95,14 +95,18 @@ struct ouichefs_dir_block {
 	} files[OUICHEFS_MAX_SUBFILES];
 };
 
-#define OUICHEFS_BITMASK_SIZE_BITS (sizeof(uint32_t) * 8)
+#define OUICHEFS_BITMAP_SIZE_BITS (sizeof(uint32_t) * 8)
+#define OUICHEFS_BITMAP_ALL_FREE 4294967294 /* 31 '1' bits and 1 '0' */
+
+#define OUICHEFS_BITMAP_IS_ALL_FREE(bh) \
+	(OUICHEFS_SLICED_BLOCK_SB_BITMAP(bh) == OUICHEFS_BITMAP_ALL_FREE)
 
 /* Finds the first set bit (1) out of the first 32 bits and clears it (0). 
    Bit 0 is the first bit and is always 0, and can this be used to indicate 
    that no free bit was found. */
 #define OUICHEFS_GET_FIRST_FREE_BIT(bh)                 \
 	get_first_free_bit((unsigned long *)bh->b_data, \
-			   (OUICHEFS_BITMASK_SIZE_BITS))
+			   (OUICHEFS_BITMAP_SIZE_BITS))
 
 /* Sliced block superblock getters/setters */
 #define OUICHEFS_SLICED_BLOCK_SB_BITMAP(bh) (*((uint32_t *)((bh)->b_data)))
@@ -147,4 +151,18 @@ extern void ouichefs_exit_sysfs(void);
 #define OUICHEFS_INODE(inode) \
 	(container_of(inode, struct ouichefs_inode_info, vfs_inode))
 
+/**
+ * @brief Deletes a slice and clears data in sliced block. 
+ * This function also checks if the sliced block is now completely vacant
+ * and frees it if so. It updates the ouichefs super block info structure
+ * to reflect the new state of the sliced block and the filesystem.
+ * Does not free the inode info structure, only the slice and potentially the sliced block.
+ * 
+ * @param ci The ouichefs inode info structure containing the small file's metadata.
+ * @param sb The super block of the ouichefs filesystem.
+ * @param sbi The ouichefs super block info structure containing filesystem metadata.
+ * @return ssize_t Returns 0 on success, or a negative error code on failure.
+ */
+ssize_t delete_slice(struct ouichefs_inode_info *ci, struct super_block *sb,
+		     struct ouichefs_sb_info *sbi);
 #endif /* _OUICHEFS_H */

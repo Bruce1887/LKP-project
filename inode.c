@@ -11,6 +11,7 @@
 #include <linux/fs.h>
 #include <linux/buffer_head.h>
 #include <linux/slab.h>
+#include <linux/types.h>
 
 #include "ouichefs.h"
 #include "bitmap.h"
@@ -98,7 +99,7 @@ failed:
  * Returns NULL on success.
  */
 static struct dentry *ouichefs_lookup(struct inode *dir, struct dentry *dentry,
-					  unsigned int flags)
+				      unsigned int flags)
 {
 	struct super_block *sb = dir->i_sb;
 	struct ouichefs_inode_info *ci_dir = OUICHEFS_INODE(dir);
@@ -124,7 +125,7 @@ static struct dentry *ouichefs_lookup(struct inode *dir, struct dentry *dentry,
 		if (!f->inode)
 			break;
 		if (!strncmp(f->filename, dentry->d_name.name,
-				 OUICHEFS_FILENAME_LEN)) {
+			     OUICHEFS_FILENAME_LEN)) {
 			inode = ouichefs_iget(sb, le32_to_cpu(f->inode));
 			break;
 		}
@@ -175,12 +176,12 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 	/* #### OLD CODE #### */
 	/* Get a free block for this new inode's index */
 	// bno = get_free_block(sbi);
-	// if (!bno) {	
+	// if (!bno) {
 	// 	ret = -ENOSPC;
 	// 	goto put_inode;
 	// }
 	// ci->index_block = bno;
-	
+
 	/* #### NEW CODE #### */
 	/* We set the index block of the inode when writing to the file instead of when creating the Inode*/
 	ci->index_block = 0;
@@ -202,8 +203,8 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 
 	return inode;
 
-// put_inode:
-// 	iput(inode);
+	// put_inode:
+	// 	iput(inode);
 
 put_ino:
 	put_inode(sbi, ino);
@@ -311,15 +312,15 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 	struct super_block *sb = dir->i_sb;
 	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
 	struct inode *inode = d_inode(dentry);
+	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 	struct buffer_head *bh = NULL, *bh2 = NULL;
 	struct ouichefs_dir_block *dir_block = NULL;
 	struct ouichefs_file_index_block *file_block = NULL;
 	uint32_t ino, bno;
 	int i, f_id = -1, nr_subs = 0;
 
-	pr_info("ouichefs_unlink: unlinking '%s'\n",
-		dentry->d_name.name);
-		
+	pr_info("ouichefs_unlink: unlinking '%s'\n", dentry->d_name.name);
+
 	ino = inode->i_ino;
 	bno = OUICHEFS_INODE(inode)->index_block;
 
@@ -353,11 +354,18 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 	mark_inode_dirty(dir);
 
 	/*
-	 * Cleanup pointed blocks if unlinking a file. If we fail to read the
-	 * index block, cleanup inode anyway and lose this file's blocks
+	* Cleanup pointed blocks if unlinking a file. If we fail to read the
+	* index block, cleanup inode anyway and lose this file's blocks
 	 * forever. If we fail to scrub a data block, don't fail (too late
 	 * anyway), just put the block and continue.
 	 */
+
+	bool small_file = inode->i_blocks == 0;
+	if (small_file) {
+		delete_slice(ci, sb, sbi);
+		goto clean_inode;
+	}
+
 	bh = sb_bread(sb, bno);
 	if (!bh)
 		goto clean_inode;
@@ -370,7 +378,7 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 		if (!file_block->blocks[i])
 			continue;
 
-	bh2 = sb_bread(sb, le32_to_cpu(file_block->blocks[i]));
+		bh2 = sb_bread(sb, le32_to_cpu(file_block->blocks[i]));
 		if (!bh2)
 			goto put_block;
 		block = (char *)bh2->b_data;
@@ -439,13 +447,13 @@ static int ouichefs_rename(struct mnt_idmap *idmap, struct inode *old_dir,
 		/* if old_dir == new_dir, save the renamed file position */
 		if (new_dir == old_dir) {
 			if (strncmp(dir_block->files[i].filename,
-					old_dentry->d_name.name,
-					OUICHEFS_FILENAME_LEN) == 0)
+				    old_dentry->d_name.name,
+				    OUICHEFS_FILENAME_LEN) == 0)
 				f_pos = i;
 		}
 		if (strncmp(dir_block->files[i].filename,
-				new_dentry->d_name.name,
-				OUICHEFS_FILENAME_LEN) == 0) {
+			    new_dentry->d_name.name,
+			    OUICHEFS_FILENAME_LEN) == 0) {
 			ret = -EEXIST;
 			goto relse_new;
 		}

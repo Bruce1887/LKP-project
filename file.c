@@ -231,7 +231,8 @@ static int ouichefs_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static bool is_small_file(struct inode *inode) {
+static bool is_small_file(struct inode *inode)
+{
 	return inode->i_blocks == 0;
 }
 
@@ -249,8 +250,8 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 	ssize_t ret = 0;
 	ssize_t copied = 0;
 
-	pr_info("pos=%lld, count=%zu, inode->i_size=%lld\n", (long long)pos,
-		count, (long long)inode->i_size);
+	pr_info("NEW READ CALL! pos=%lld, count=%zu, inode->i_size=%lld\n",
+		(long long)pos, count, (long long)inode->i_size);
 
 	/* Check if read position is beyond file size */
 	if (pos >= inode->i_size) {
@@ -440,31 +441,65 @@ static ssize_t allocate_and_init_slice_block(struct super_block *sb,
 	return (ssize_t)free_block;
 }
 
-static bool is_new(uint32_t index_block) {
+static bool is_new(uint32_t index_block)
+{
 	return index_block == 0;
 }
 
-static bool will_be_small(loff_t new_size) {
+static bool will_be_small(loff_t new_size)
+{
 	return new_size <= OUICHEFS_SLICE_SIZE;
 }
 
-static ssize_t write_big_file(
-	struct inode *inode,
-	struct ouichefs_inode_info *ci,
-	struct super_block *sb,
-	struct ouichefs_sb_info * sbi,
-	struct kiocb *iocb,
-	struct iov_iter *from
-);
+static ssize_t write_big_file(struct inode *inode,
+			      struct ouichefs_inode_info *ci,
+			      struct super_block *sb,
+			      struct ouichefs_sb_info *sbi, struct kiocb *iocb,
+			      struct iov_iter *from);
 
-static ssize_t write_small_file(
-	struct inode *inode,
-	struct ouichefs_inode_info *ci,
-	struct super_block *sb,
-	struct ouichefs_sb_info * sbi,
-	struct kiocb *iocb,
-	struct iov_iter *from
-);
+static ssize_t write_small_file(struct inode *inode,
+				struct ouichefs_inode_info *ci,
+				struct super_block *sb,
+				struct ouichefs_sb_info *sbi,
+				struct kiocb *iocb, struct iov_iter *from);
+
+ssize_t delete_slice(struct ouichefs_inode_info *ci,
+			    struct super_block *sb,
+			    struct ouichefs_sb_info *sbi)
+{
+	uint32_t bno = OUICHEFS_SMALL_FILE_GET_BNO(ci);
+	uint32_t slice_no = OUICHEFS_SMALL_FILE_GET_SLICE(ci);
+
+	struct buffer_head *bh = NULL;
+	bh = sb_bread(sb, bno);
+	if (!bh) {
+		pr_err("cannot read slice block %u\n", bno);
+		brelse(bh);
+		return -EIO;
+	}
+
+	/* Zero out the slice for the small file */
+	memset(bh->b_data + slice_no * OUICHEFS_SLICE_SIZE, 0,
+	       OUICHEFS_SLICE_SIZE);
+
+	put_free_bit((unsigned long *)((bh)->b_data), OUICHEFS_BITMAP_SIZE_BITS,
+		     slice_no);
+
+	/* Check if this sliced block is now completely vacant.
+	If so, update sbi->s_free_sliced_blocks to point to whatever block comes next (0 or another block) */
+	if (OUICHEFS_BITMAP_IS_ALL_FREE(bh) &&
+	    bno == sbi->s_free_sliced_blocks) {
+		sbi->s_free_sliced_blocks = OUICHEFS_SLICED_BLOCK_SB_NEXT(bh);
+		memset(bh->b_data, 0, OUICHEFS_BLOCK_SIZE);
+		put_block(sbi, bno);
+		/* Reset index block */
+	}
+	
+	ci->index_block = 0;
+	mark_buffer_dirty(bh);
+	brelse(bh);
+	return 0;
+}
 
 static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 {
@@ -478,9 +513,10 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	loff_t old_size = inode->i_size;
 	loff_t new_size = max((loff_t)(pos + count), old_size);
 
-	pr_info("pos: %lld, flags: %d", pos, iocb->ki_flags);
+	pr_info("NEW WRITE CALL! pos: %lld, flags: %d", pos, iocb->ki_flags);
 
 	if (is_new(ci->index_block)) {
+		/* Writing to a file that has never been written to */
 		if (will_be_small(new_size)) {
 			pr_info("using write_small_file implementation\n");
 			return write_small_file(inode, ci, sb, sbi, iocb, from);
@@ -489,28 +525,41 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			return write_big_file(inode, ci, sb, sbi, iocb, from);
 		}
 	} else {
-		if(!is_small_file(&ci->vfs_inode)) {
+		/* Writing to a file has previously been written to */
+		if (!is_small_file(&ci->vfs_inode)) {
 			pr_info("using write_big_file implementation\n");
 			return write_big_file(inode, ci, sb, sbi, iocb, from);
 		} else if (will_be_small(new_size)) {
 			pr_info("using write_small_file implementation\n");
 			return write_small_file(inode, ci, sb, sbi, iocb, from);
-		} else {
+		} else if (!will_be_small(new_size) &&
+			   is_small_file(&ci->vfs_inode)) {
+			/* We are writing to a small file that will become big */
+			pr_info("Converting small file to big file\n");
+			
+			/* TODO: We need to keep the data in the slice in case of non-overwriting writes (e.g. appending with >> )*/
+			
+			/* Removing the previous slice for this small file */
+			ssize_t err = delete_slice(ci, sb, sbi);
+			if (err < 0) {
+				pr_err("Failed to delete slice: %zd\n", err);
+				return err;
+			}
 
+			return write_big_file(inode, ci, sb, sbi, iocb, from);
 		}
 	}
-
-	return 0;
+	/* "default:" */
+	pr_err("Unexpected case in custom_write_iter\n");
+	return -EINVAL;
 }
 
-static ssize_t write_big_file(
-	struct inode *inode,
-	struct ouichefs_inode_info *ci,
-	struct super_block *sb,
-	struct ouichefs_sb_info * sbi,
-	struct kiocb *iocb,
-	struct iov_iter *from
-) {
+static ssize_t write_big_file(struct inode *inode,
+			      struct ouichefs_inode_info *ci,
+			      struct super_block *sb,
+			      struct ouichefs_sb_info *sbi, struct kiocb *iocb,
+			      struct iov_iter *from)
+{
 	struct ouichefs_file_index_block *index;
 	struct buffer_head *bh_index = NULL, *bh_data = NULL;
 	size_t count = iov_iter_count(from);
@@ -525,7 +574,6 @@ static ssize_t write_big_file(
 	loff_t old_size = inode->i_size;
 	loff_t new_size = max((loff_t)(pos + count), old_size);
 	uint32_t old_blocks;
-
 
 	/* Check if this inode's index_block field has NOT yet been set */
 	if (ci->index_block == 0) {
@@ -555,6 +603,8 @@ static ssize_t write_big_file(
 		/* We need more blocks */
 		uint32_t blocks_needed = nr_allocs - (inode->i_blocks - 1);
 		if (blocks_needed > sbi->nr_free_blocks) {
+			pr_err("Not enough free blocks: %u needed, %u available\n",
+			       blocks_needed, sbi->nr_free_blocks);
 			return -ENOSPC;
 		}
 	}
@@ -563,6 +613,7 @@ static ssize_t write_big_file(
 	bh_index = sb_bread(sb, ci->index_block);
 	if (!bh_index) {
 		ret = -EIO;
+		pr_err("Failed to read index block %u\n", ci->index_block);
 		goto out;
 	}
 	index = (struct ouichefs_file_index_block *)bh_index->b_data;
@@ -580,6 +631,8 @@ static ssize_t write_big_file(
 		/* Check if block index is valid */
 		if (block_idx >= OUICHEFS_BLOCK_SIZE >> 2) {
 			ret = -EFBIG;
+			pr_err("Block index %llu exceeds maximum (%d)\n",
+			       block_idx, OUICHEFS_BLOCK_SIZE >> 2);
 			goto out;
 		}
 
@@ -588,8 +641,10 @@ static ssize_t write_big_file(
 		if (physical_block == 0) {
 			/* Allocate new block */
 			physical_block = get_free_block(sbi);
+
 			if (!physical_block) {
 				ret = -ENOSPC;
+				pr_err("Failed to allocate physical block\n");
 				goto out;
 			}
 			index->blocks[block_idx] = cpu_to_le32(physical_block);
@@ -600,9 +655,10 @@ static ssize_t write_big_file(
 		bh_data = sb_bread(sb, physical_block);
 		if (!bh_data) {
 			ret = -EIO;
+			pr_err("Failed to read data block %u\n",
+			       physical_block);
 			goto out;
 		}
-
 		/* If writing beyond current file size, zero the gap */
 		if (pos > inode->i_size) {
 			loff_t gap_start = inode->i_size;
@@ -620,11 +676,11 @@ static ssize_t write_big_file(
 				       gap_size);
 			}
 		}
-
 		/* Copy data from user space */
 		if (copy_from_iter(bh_data->b_data + block_offset, to_write,
 				   from) != to_write) {
 			brelse(bh_data);
+			pr_err("Failed to copy data from user space\n");
 			ret = -EFAULT;
 			goto out;
 		}
@@ -672,14 +728,12 @@ out:
 	return ret;
 }
 
-static ssize_t write_small_file(
-	struct inode *inode,
-	struct ouichefs_inode_info *ci,
-	struct super_block *sb,
-	struct ouichefs_sb_info * sbi,
-	struct kiocb *iocb,
-	struct iov_iter *from
-) {
+static ssize_t write_small_file(struct inode *inode,
+				struct ouichefs_inode_info *ci,
+				struct super_block *sb,
+				struct ouichefs_sb_info *sbi,
+				struct kiocb *iocb, struct iov_iter *from)
+{
 	struct buffer_head *bh_index = NULL, *bh_data = NULL;
 	size_t count = iov_iter_count(from);
 	loff_t pos = iocb->ki_pos;
