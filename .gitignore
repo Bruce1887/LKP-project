@@ -36,6 +36,7 @@
 *.x86_64
 *.hex
 mkfs/mkfs.ouichefs
+test/test-ouichefs
 
 # Debug files
 *.dSYM/
