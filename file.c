@@ -463,9 +463,8 @@ static ssize_t write_small_file(struct inode *inode,
 				struct ouichefs_sb_info *sbi,
 				struct kiocb *iocb, struct iov_iter *from);
 
-ssize_t delete_slice(struct ouichefs_inode_info *ci,
-			    struct super_block *sb,
-			    struct ouichefs_sb_info *sbi)
+ssize_t delete_slice(struct ouichefs_inode_info *ci, struct super_block *sb,
+		     struct ouichefs_sb_info *sbi)
 {
 	uint32_t bno = OUICHEFS_SMALL_FILE_GET_BNO(ci);
 	uint32_t slice_no = OUICHEFS_SMALL_FILE_GET_SLICE(ci);
@@ -492,13 +491,135 @@ ssize_t delete_slice(struct ouichefs_inode_info *ci,
 		sbi->s_free_sliced_blocks = OUICHEFS_SLICED_BLOCK_SB_NEXT(bh);
 		memset(bh->b_data, 0, OUICHEFS_BLOCK_SIZE);
 		put_block(sbi, bno);
-		/* Reset index block */
 	}
 	
+	/* Reset index block */
 	ci->index_block = 0;
+	mark_inode_dirty(&ci->vfs_inode);
 	mark_buffer_dirty(bh);
 	brelse(bh);
 	return 0;
+}
+
+/* TODO: This function reads the data in the small file's slice, combines it with input from user-space and writes it using write_big_file(). I write big file fails, the small slice will still be removed! 
+Solution 1: Dont care.
+Solution 2: put necessary funtionality from delete_slice() in here (ugly but should work) */
+static ssize_t convert_small_to_big(struct kiocb *iocb, struct iov_iter *from)
+{
+	struct file *file = iocb->ki_filp;
+	struct inode *inode = file_inode(file);
+	struct super_block *sb = inode->i_sb;
+	struct ouichefs_sb_info *sbi = OUICHEFS_SB(sb);
+	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+	loff_t pos = iocb->ki_pos;
+	loff_t count = iov_iter_count(from);
+	loff_t old_size = inode->i_size;
+	
+	pr_info("Converting small file to big file. count: %lld, pos: %lld, inode->i_size: %lld\n",
+		count, pos, inode->i_size);
+
+	ssize_t ret = 0;
+	char *combined_buf = NULL;
+	struct kvec *kv = NULL;
+	struct iov_iter new_iter;
+	loff_t write_pos = pos;
+
+	if (iocb->ki_flags & IOCB_APPEND) {
+		write_pos = old_size;
+	}
+
+	/* Always read the existing small file data first */
+	struct buffer_head *bh_data = NULL;
+	uint32_t bno = OUICHEFS_SMALL_FILE_GET_BNO(ci);
+	bh_data = sb_bread(sb, bno);
+	if (!bh_data) {
+		pr_err("Failed to read sliced block %u\n", bno);
+		ret = -EIO;
+		goto out;
+	}
+
+	/* Calculate the total size of the new file */
+	size_t new_file_size = max(write_pos + count, old_size);
+	
+	/* Allocate buffer for the entire new file content */
+	combined_buf = kmalloc(new_file_size, GFP_KERNEL);
+	if (!combined_buf) {
+		brelse(bh_data);
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	uint32_t slice_no = OUICHEFS_SMALL_FILE_GET_SLICE(ci);
+
+	/* Copy existing file data to the beginning of the buffer */
+	memcpy(combined_buf,
+	       bh_data->b_data + slice_no * OUICHEFS_SLICE_SIZE,
+	       old_size);
+	brelse(bh_data);
+
+	/* Zero-fill any gap between old data and write position */
+	if (write_pos > old_size) {
+		memset(combined_buf + old_size, 0, write_pos - old_size);
+	}
+
+	/* Copy new data from user space into the buffer */
+	size_t copied = copy_from_iter(combined_buf + write_pos, count, from);
+	if (copied != count) {
+		pr_err("Failed to copy user data from iterator\n");
+		ret = -EFAULT;
+		goto out;
+	}
+
+	/* Create kvec and iterator for the entire new file content */
+	kv = kmalloc(sizeof(struct kvec), GFP_KERNEL);
+	if (!kv) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	kv->iov_base = combined_buf;
+	kv->iov_len = new_file_size;
+	
+	/* Create iterator that contains the complete new file */
+	iov_iter_kvec(&new_iter, READ, kv, 1, new_file_size);
+	new_iter.data_source = 1;
+
+
+	/* Remove the old small file structure */
+	ssize_t err = delete_slice(ci, sb, sbi);
+	if (err < 0) {
+		pr_err("Failed to delete slice: %zd\n", err);
+		ret = err;
+		goto out;
+	}
+
+	/* Reset inode size to 0 since we're creating a new file */
+	inode->i_size = 0;
+	
+	/* Reset position to 0 and remove append flag - we're writing entire file */
+	struct kiocb new_iocb = *iocb;
+	new_iocb.ki_pos = 0;
+	new_iocb.ki_flags &= ~IOCB_APPEND;
+
+	pr_info("inode index_block: %u\n", ci->index_block);
+
+	/* Write the entire new file content */
+	ret = write_big_file(inode, ci, sb, sbi, &new_iocb, &new_iter);
+	
+	if (ret > 0) {
+		/* Update the original iocb position to reflect the write position */
+		iocb->ki_pos = write_pos + count;
+		/* Return the number of bytes actually written by the user */
+		ret = count;
+	}
+
+out:
+	if (combined_buf) {
+		kfree(combined_buf);
+	}
+	if (kv) {
+		kfree(kv);
+	}
+	return ret;
 }
 
 static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
@@ -534,19 +655,7 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 			return write_small_file(inode, ci, sb, sbi, iocb, from);
 		} else if (!will_be_small(new_size) &&
 			   is_small_file(&ci->vfs_inode)) {
-			/* We are writing to a small file that will become big */
-			pr_info("Converting small file to big file\n");
-			
-			/* TODO: We need to keep the data in the slice in case of non-overwriting writes (e.g. appending with >> )*/
-			
-			/* Removing the previous slice for this small file */
-			ssize_t err = delete_slice(ci, sb, sbi);
-			if (err < 0) {
-				pr_err("Failed to delete slice: %zd\n", err);
-				return err;
-			}
-
-			return write_big_file(inode, ci, sb, sbi, iocb, from);
+			return convert_small_to_big(iocb, from);
 		}
 	}
 	/* "default:" */
@@ -590,11 +699,11 @@ static ssize_t write_big_file(struct inode *inode,
 
 	/* Calculate new file size and required blocks */
 	new_size = max((loff_t)(pos + count), old_size);
-	pr_info("%s: old_size=%lld, new_size=%lld\n", __func__, old_size,
-		new_size);
+	pr_info("old_size=%lld, new_size=%lld\n", old_size, new_size);
 
-	pr_info("%s: inode.index_block: %u\n", __func__, ci->index_block);
+	pr_info("inode.index_block: %u\n", ci->index_block);
 
+	pr_info("ci->index_block: %u\n", ci->index_block);
 	/* Calculate required blocks for file (size > 128 bytes) */
 	nr_allocs = DIV_ROUND_UP(new_size, OUICHEFS_BLOCK_SIZE);
 
@@ -676,11 +785,12 @@ static ssize_t write_big_file(struct inode *inode,
 				       gap_size);
 			}
 		}
+
 		/* Copy data from user space */
 		if (copy_from_iter(bh_data->b_data + block_offset, to_write,
 				   from) != to_write) {
 			brelse(bh_data);
-			pr_err("Failed to copy data from user space\n");
+			pr_err("Failed to copy data from iter\n");
 			ret = -EFAULT;
 			goto out;
 		}
