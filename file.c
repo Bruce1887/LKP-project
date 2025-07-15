@@ -463,19 +463,20 @@ static ssize_t write_small_file(struct inode *inode,
 				struct ouichefs_sb_info *sbi,
 				struct kiocb *iocb, struct iov_iter *from);
 
-ssize_t delete_slice(struct ouichefs_inode_info *ci, struct super_block *sb,
-		     struct ouichefs_sb_info *sbi)
+/* Bad naming of this function since it is not only used by delete_slice but idc */
+static ssize_t delete_slice_aux(struct super_block *sb,
+				struct ouichefs_sb_info *sbi,
+				uint32_t bno, uint32_t slice_no,
+				struct buffer_head *bh)
 {
-	uint32_t bno = OUICHEFS_SMALL_FILE_GET_BNO(ci);
-	uint32_t slice_no = OUICHEFS_SMALL_FILE_GET_SLICE(ci);
-
-	struct buffer_head *bh = NULL;
 	bh = sb_bread(sb, bno);
 	if (!bh) {
 		pr_err("cannot read slice block %u\n", bno);
 		brelse(bh);
 		return -EIO;
 	}
+
+	pr_info("Deleting slice %u from sliced block %u\n", slice_no, bno);
 
 	/* Zero out the slice for the small file */
 	memset(bh->b_data + slice_no * OUICHEFS_SLICE_SIZE, 0,
@@ -488,11 +489,31 @@ ssize_t delete_slice(struct ouichefs_inode_info *ci, struct super_block *sb,
 	If so, update sbi->s_free_sliced_blocks to point to whatever block comes next (0 or another block) */
 	if (OUICHEFS_BITMAP_IS_ALL_FREE(bh) &&
 	    bno == sbi->s_free_sliced_blocks) {
+			pr_info("sliced block %u is now completely free, updating sbi->s_free_sliced_blocks\n",
+			       bno);
 		sbi->s_free_sliced_blocks = OUICHEFS_SLICED_BLOCK_SB_NEXT(bh);
 		memset(bh->b_data, 0, OUICHEFS_BLOCK_SIZE);
 		put_block(sbi, bno);
 	}
-	
+
+	return 0;
+}
+
+ssize_t delete_slice(struct ouichefs_inode_info *ci, struct super_block *sb,
+		     struct ouichefs_sb_info *sbi)
+{
+	ssize_t ret = 0;
+	uint32_t bno = OUICHEFS_SMALL_FILE_GET_BNO(ci);
+	uint32_t slice_no = OUICHEFS_SMALL_FILE_GET_SLICE(ci);
+
+	struct buffer_head *bh = NULL;
+	ret = delete_slice_aux(sb, sbi, bno, slice_no, bh);
+
+	if (ret < 0) {
+		pr_err("Failed to delete slice: %zd\n", ret);
+		return ret;
+	}
+
 	/* Reset index block */
 	ci->index_block = 0;
 	mark_inode_dirty(&ci->vfs_inode);
@@ -513,8 +534,11 @@ static ssize_t convert_small_to_big(struct kiocb *iocb, struct iov_iter *from)
 	struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 	loff_t pos = iocb->ki_pos;
 	loff_t count = iov_iter_count(from);
+
+	/*	Stor old data about the file incase we fail to write a big one */
 	loff_t old_size = inode->i_size;
-	
+	uint32_t old_index_block = ci->index_block;
+	loff_t old_pos = pos;
 	pr_info("Converting small file to big file. count: %lld, pos: %lld, inode->i_size: %lld\n",
 		count, pos, inode->i_size);
 
@@ -523,13 +547,13 @@ static ssize_t convert_small_to_big(struct kiocb *iocb, struct iov_iter *from)
 	struct kvec *kv = NULL;
 	struct iov_iter new_iter;
 	loff_t write_pos = pos;
+	struct buffer_head *bh_data = NULL;
 
 	if (iocb->ki_flags & IOCB_APPEND) {
 		write_pos = old_size;
 	}
 
 	/* Always read the existing small file data first */
-	struct buffer_head *bh_data = NULL;
 	uint32_t bno = OUICHEFS_SMALL_FILE_GET_BNO(ci);
 	bh_data = sb_bread(sb, bno);
 	if (!bh_data) {
@@ -540,7 +564,7 @@ static ssize_t convert_small_to_big(struct kiocb *iocb, struct iov_iter *from)
 
 	/* Calculate the total size of the new file */
 	size_t new_file_size = max(write_pos + count, old_size);
-	
+
 	/* Allocate buffer for the entire new file content */
 	combined_buf = kmalloc(new_file_size, GFP_KERNEL);
 	if (!combined_buf) {
@@ -552,8 +576,7 @@ static ssize_t convert_small_to_big(struct kiocb *iocb, struct iov_iter *from)
 	uint32_t slice_no = OUICHEFS_SMALL_FILE_GET_SLICE(ci);
 
 	/* Copy existing file data to the beginning of the buffer */
-	memcpy(combined_buf,
-	       bh_data->b_data + slice_no * OUICHEFS_SLICE_SIZE,
+	memcpy(combined_buf, bh_data->b_data + slice_no * OUICHEFS_SLICE_SIZE,
 	       old_size);
 	brelse(bh_data);
 
@@ -578,23 +601,14 @@ static ssize_t convert_small_to_big(struct kiocb *iocb, struct iov_iter *from)
 	}
 	kv->iov_base = combined_buf;
 	kv->iov_len = new_file_size;
-	
+
 	/* Create iterator that contains the complete new file */
 	iov_iter_kvec(&new_iter, READ, kv, 1, new_file_size);
 	new_iter.data_source = 1;
 
-
-	/* Remove the old small file structure */
-	ssize_t err = delete_slice(ci, sb, sbi);
-	if (err < 0) {
-		pr_err("Failed to delete slice: %zd\n", err);
-		ret = err;
-		goto out;
-	}
-
 	/* Reset inode size to 0 since we're creating a new file */
 	inode->i_size = 0;
-	
+
 	/* Reset position to 0 and remove append flag - we're writing entire file */
 	struct kiocb new_iocb = *iocb;
 	new_iocb.ki_pos = 0;
@@ -604,12 +618,23 @@ static ssize_t convert_small_to_big(struct kiocb *iocb, struct iov_iter *from)
 
 	/* Write the entire new file content */
 	ret = write_big_file(inode, ci, sb, sbi, &new_iocb, &new_iter);
-	
+
 	if (ret > 0) {
 		/* Update the original iocb position to reflect the write position */
 		iocb->ki_pos = write_pos + count;
 		/* Return the number of bytes actually written by the user */
 		ret = count;
+
+		/* We ignore the return value of deleting the slice here. If data is lost then so be it.*/
+
+		pr_info("Successfully wrote big file, deleting old slice\n");
+		delete_slice_aux(sb, sbi, bno, slice_no, bh_data);
+	} else {
+		pr_err("Failed to write big file: %zd\n", ret);
+		/* If writing failed, restore the old inode */
+		ci->index_block = old_index_block;
+		inode->i_size = old_size;
+		iocb->ki_pos = old_pos;
 	}
 
 out:

@@ -157,6 +157,7 @@ extern void ouichefs_exit_sysfs(void);
  * and frees it if so. It updates the ouichefs super block info structure
  * to reflect the new state of the sliced block and the filesystem.
  * Does not free the inode info structure, only the slice and potentially the sliced block.
+ * It does however alter the inode info structure by resetting the index_block field to 0.
  * 
  * @param ci The ouichefs inode info structure containing the small file's metadata.
  * @param sb The super block of the ouichefs filesystem.
