@@ -96,7 +96,7 @@ struct ouichefs_dir_block {
 };
 
 #define OUICHEFS_BITMAP_SIZE_BITS (sizeof(uint32_t) * 8)
-#define OUICHEFS_BITMAP_ALL_FREE 4294967294 /* 31 '1' bits and 1 '0' */
+#define OUICHEFS_BITMAP_ALL_FREE 4294967294 /* unsigned 32 bit number. 31 '1' bits and 1 '0' */
 
 #define OUICHEFS_BITMAP_IS_ALL_FREE(bh) \
 	(OUICHEFS_SLICED_BLOCK_SB_BITMAP(bh) == OUICHEFS_BITMAP_ALL_FREE)
@@ -164,6 +164,6 @@ extern void ouichefs_exit_sysfs(void);
  * @param sbi The ouichefs super block info structure containing filesystem metadata.
  * @return ssize_t Returns 0 on success, or a negative error code on failure.
  */
-ssize_t delete_slice(struct ouichefs_inode_info *ci, struct super_block *sb,
+ssize_t delete_slice_and_clear_inode(struct ouichefs_inode_info *ci, struct super_block *sb,
 		     struct ouichefs_sb_info *sbi);
 #endif /* _OUICHEFS_H */

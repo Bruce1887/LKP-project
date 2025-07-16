@@ -362,7 +362,7 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 
 	bool small_file = inode->i_blocks == 0;
 	if (small_file) {
-		delete_slice(ci, sb, sbi);
+		delete_slice_and_clear_inode(ci, sb, sbi);
 		goto clean_inode;
 	}
 
