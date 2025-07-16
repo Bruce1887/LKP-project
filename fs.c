@@ -72,6 +72,8 @@ static int __init ouichefs_init(void)
 		goto err_inode;
 	}
 
+	ouichefs_register_device();
+
 	pr_info("module loaded\n");
 	return 0;
 
@@ -86,6 +88,8 @@ err:
 static void __exit ouichefs_exit(void)
 {
 	int ret;
+
+	ouichefs_unregister_device();
 
 	ret = unregister_filesystem(&ouichefs_file_system_type);
 	if (ret)

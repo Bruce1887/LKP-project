@@ -146,6 +146,10 @@ extern void ouichefs_unregister_sysfs(struct super_block *sb);
 extern int __init ouichefs_init_sysfs(void);
 extern void ouichefs_exit_sysfs(void);
 
+/* ioctl */
+extern void ouichefs_register_device(void);
+extern void ouichefs_unregister_device(void);
+
 /* Getters for superbock and inode */
 #define OUICHEFS_SB(sb) (sb->s_fs_info)
 #define OUICHEFS_INODE(inode) \
