@@ -72,6 +72,7 @@ struct inode *ouichefs_iget(struct super_block *sb, unsigned long ino)
 	set_nlink(inode, le32_to_cpu(cinode->i_nlink));
 
 	ci->index_block = le32_to_cpu(cinode->index_block);
+	ci->num_slices = le16_to_cpu(cinode->num_slices);
 
 	if (S_ISDIR(inode->i_mode)) {
 		inode->i_fop = &ouichefs_dir_ops;
@@ -185,6 +186,7 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 	/* #### NEW CODE #### */
 	/* We set the index block of the inode when writing to the file instead of when creating the Inode*/
 	ci->index_block = 0;
+	ci->num_slices = 0;
 
 	/* Initialize inode */
 	inode_init_owner(&nop_mnt_idmap, inode, dir, mode);
@@ -200,6 +202,7 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 	set_nlink(inode, 1);
 
 	inode->i_ctime = inode->i_atime = inode->i_mtime = current_time(inode);
+
 
 	return inode;
 

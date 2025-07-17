@@ -296,8 +296,6 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 		goto out;
 	}
 
-	pr_info("Reading small file: bno=%u, slice_no=%u\n", bno, slice_no);
-
 	/* Check if slice_no is valid */
 	if (slice_no == 0 ||
 	    slice_no >= OUICHEFS_SLICE_SIZE / sizeof(uint32_t)) {
@@ -309,7 +307,8 @@ static ssize_t custom_read_iter(struct kiocb *iocb, struct iov_iter *to)
 
 	pr_info("slice bitmap: %u\n", OUICHEFS_SLICED_BLOCK_SB_BITMAP(bh_data));
 
-	/* Copy data from user space */
+	/* TODO: DO WE READ ALL THE SLICES FOR THIS FILE? */
+	/* Copy data to user space */
 	if (copy_to_iter(bh_data->b_data + slice_no * OUICHEFS_SLICE_SIZE,
 			 count, to) != count) {
 		brelse(bh_data);
@@ -438,6 +437,7 @@ static ssize_t allocate_and_init_slice_block(struct super_block *sb,
 		*bh_data = NULL;
 		return -EIO;
 	}
+	pr_info("Allocated new sliced block: %u\n", free_block);
 	return (ssize_t)free_block;
 }
 
@@ -478,21 +478,21 @@ static ssize_t delete_slice(struct super_block *sb,
 		return -EIO;
 	}
 
-	uint32_t num_slices =
-		DIV_ROUND_UP(ci->vfs_inode.i_size, OUICHEFS_SLICE_SIZE);
-	uint32_t mask = ((1U << num_slices) - 1) << (slice_no);
+	uint32_t mask = ((1U << ci->num_slices) - 1) << (slice_no);
 
 	/* Mark the slices the file used as free*/
 	*(uint32_t *)bh->b_data |= mask;
 
 	/* Zero out the slices for the small file */
 	memset(bh->b_data + slice_no * OUICHEFS_SLICE_SIZE, 0,
-	       num_slices * OUICHEFS_SLICE_SIZE);
+	       ci->num_slices * OUICHEFS_SLICE_SIZE);
 
 	/* Check if this sliced block is now completely vacant.
 	If so, update sbi->s_free_sliced_blocks to point to whatever block comes next (0 or another block) */
 	if (OUICHEFS_BITMAP_IS_ALL_FREE(bh) &&
 	    bno == sbi->s_free_sliced_blocks) {
+
+		/* TODO: I think we might have sliced blocks which are empty but not freed */
 		pr_info("sliced block %u is now completely free, updating sbi->s_free_sliced_blocks\n",
 			bno);
 		sbi->s_free_sliced_blocks = OUICHEFS_SLICED_BLOCK_SB_NEXT(bh);
@@ -620,8 +620,6 @@ static ssize_t convert_small_to_big(struct kiocb *iocb, struct iov_iter *from)
 	new_iocb.ki_pos = 0;
 	new_iocb.ki_flags &= ~IOCB_APPEND;
 
-	pr_info("inode index_block: %u\n", ci->index_block);
-
 	/* Write the entire new file content */
 	ret = write_big_file(inode, ci, sb, sbi, &new_iocb, &new_iter);
 
@@ -632,8 +630,6 @@ static ssize_t convert_small_to_big(struct kiocb *iocb, struct iov_iter *from)
 		ret = count;
 
 		/* We ignore the return value of deleting the slice here. If data is lost then so be it.*/
-
-		pr_info("Successfully wrote big file, deleting old slice\n");
 		delete_slice(sb, sbi, ci);
 	} else {
 		pr_err("Failed to write big file: %zd\n", ret);
@@ -667,6 +663,9 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 
 	pr_info("NEW WRITE CALL! pos: %lld, flags: %d, count: %lu", pos,
 		iocb->ki_flags, count);
+
+	pr_info("inode num slices -> %d\n",
+		ci->num_slices);
 
 	if (is_new(ci->index_block)) {
 		/* Writing to a file that has never been written to */
@@ -731,11 +730,9 @@ static ssize_t write_big_file(struct inode *inode,
 
 	/* Calculate new file size and required blocks */
 	new_size = max((loff_t)(pos + count), old_size);
-	pr_info("old_size=%lld, new_size=%lld\n", old_size, new_size);
+	pr_info("old_size=%lld, new_size=%lld, index_block: %u\n", old_size,
+		new_size, ci->index_block);
 
-	pr_info("inode.index_block: %u\n", ci->index_block);
-
-	pr_info("ci->index_block: %u\n", ci->index_block);
 	/* Calculate required blocks for file (size > 128 bytes) */
 	nr_allocs = DIV_ROUND_UP(new_size, OUICHEFS_BLOCK_SIZE);
 
@@ -838,7 +835,6 @@ static ssize_t write_big_file(struct inode *inode,
 		count -= to_write;
 		copied += to_write;
 	}
-	pr_info("%s: wrote %zd bytes at pos %lld\n", __func__, copied, pos);
 	/* Update inode metadata */
 	if (pos > inode->i_size) {
 		inode->i_size = pos;
@@ -858,10 +854,6 @@ static ssize_t write_big_file(struct inode *inode,
 
 out:
 
-	pr_info("at out section\n");
-	pr_info("bh_index: %p, bh_data: %p, ret: %ld\n", bh_index, bh_data,
-		ret);
-
 	if (bh_index)
 		brelse(bh_index);
 	if (bh_data)
@@ -871,7 +863,7 @@ out:
 }
 
 static uint32_t get_consequitive_free_slices(struct buffer_head **bh_data,
-					     loff_t file_size)
+					     struct ouichefs_inode_info *ci, loff_t file_size)
 {
 	/* Check how many consequtive slices we need and see if we have that many in the current block */
 	uint32_t slice_to_write = 0;
@@ -880,11 +872,14 @@ static uint32_t get_consequitive_free_slices(struct buffer_head **bh_data,
 		       file_size, OUICHEFS_BLOCK_SIZE);
 		return 0; // No valid slice to write
 	}
+
+
 	uint32_t bitmap = *(uint32_t *)(*bh_data)->b_data;
 	uint32_t num_slices_needed =
 		DIV_ROUND_UP(file_size, OUICHEFS_SLICE_SIZE);
 	uint32_t mask = ((1U << num_slices_needed) - 1) << 1;
 
+	pr_info("mask: %u",mask);
 	for (int i = 1; i <= OUICHEFS_BITMAP_SIZE_BITS - (num_slices_needed);
 	     i++) {
 		if (bitmap & mask) {
@@ -895,6 +890,12 @@ static uint32_t get_consequitive_free_slices(struct buffer_head **bh_data,
 		mask <<= 1;
 	}
 
+	pr_info("slice_to_write: %u, num_slices_needed: %u, bitmap: %u\n",
+		slice_to_write, num_slices_needed, bitmap);
+	if(slice_to_write != 0) {
+		ci->num_slices = (uint16_t) num_slices_needed;
+		mark_inode_dirty(&ci->vfs_inode);
+	}
 	return slice_to_write;
 }
 
@@ -929,8 +930,6 @@ static ssize_t write_small_file(struct inode *inode,
 				goto out;
 			}
 			sbi->s_free_sliced_blocks = (uint32_t)block_to_write;
-			pr_info("Allocated new sliced block: %u\n",
-				block_to_write);
 
 		} else {
 			/* There already is a sliced block, read it. */
@@ -945,24 +944,17 @@ static ssize_t write_small_file(struct inode *inode,
 
 		/* Check how many consequtive slices we need and see if we have that many in the current block */
 		slice_to_write =
-			get_consequitive_free_slices(&bh_data, new_size);
-
-		if (slice_to_write == 0) {
-			pr_info("No free slices available in sliced block %u. Checking next block...\n",
-				block_to_write);
-		} else {
-			pr_info("Found slice to write: %u in sliced block %u\n",
-				slice_to_write, block_to_write);
-		}
+			get_consequitive_free_slices(&bh_data, ci,new_size);
 
 		/* slice_to_write is 0 if we did not find a place to write our file in the block (we assume that the first bit is never free) */
 		while (slice_to_write == 0) {
 			/* Try fetch reference to next sliced block */
 			block_to_write = OUICHEFS_SLICED_BLOCK_SB_NEXT(bh_data);
 
+			pr_info("block_to_write: %u\n", block_to_write);
 			/* Store reference to the current block as previous */
 			bh_index = bh_data;
-			bh_data = NULL; 
+			bh_data = NULL;
 
 			if (block_to_write == 0) {
 				/* No next sliced block, allocate a new one */
@@ -999,39 +991,36 @@ static ssize_t write_small_file(struct inode *inode,
 
 			/* Check if this block has any empty slices */
 			slice_to_write = get_consequitive_free_slices(&bh_data,
-								      new_size);
-
-			if (slice_to_write == 0 && block_to_write == 0) {
-				panic("Allocated new sliced block but it has no empty slices");
-			}
+								      ci,new_size);
 		}
 	} else {
-		/* TODO: read alert below */
-		pr_alert(
-			"WARNING: THIS DOES NOT SUPPORT RESIZING A SMALL FILE WITH REGARDS TO THE AMOUNT OF SLICES. WE NEED TO FIX THIS");
-
-		/* This is a small file that has already been added to a partially filled block.
-			We can use the index_block field to find the block and slice to write to. */
 		pr_info("This is a small file that has already been added to a sliced block.\n");
-		block_to_write = OUICHEFS_SMALL_FILE_GET_BNO(ci);
-		slice_to_write = OUICHEFS_SMALL_FILE_GET_SLICE(ci);
+		uint32_t bno = OUICHEFS_SMALL_FILE_GET_BNO(ci);
+		uint32_t slice_no = OUICHEFS_SMALL_FILE_GET_SLICE(ci);
 
-		pr_info("block_to_write: %u, slice_to_write: %u\n",
-			block_to_write, slice_to_write);
+		pr_info("bno: %u, slice_no: %u\n", bno, slice_no);
 
-		if (block_to_write == 0 || slice_to_write == 0) {
-			pr_err("block_to_write or slice_to_write is 0, this should not happen!\n");
+		if (bno == 0 || slice_no == 0) {
+			pr_err("bno or slice_no is 0, this should not happen!\n");
 			ret = -EIO;
 			goto out;
 		}
-
-		bh_data = sb_bread(sb, block_to_write);
+		
+		bh_data = sb_bread(sb, bno);
 		if (!bh_data) {
 			pr_err("Failed to read sliced block %u\n",
 			       block_to_write);
 			ret = -EIO;
 			goto out;
 		}
+
+		uint32_t old_mask = ((1U << ci->num_slices) - 1) << (slice_no);
+
+		/* Mark the slices the file used as free*/
+		*(uint32_t *)bh_data->b_data |= old_mask;
+
+		pr_info("ci->num_slices: %u. old_mask: %xu\n", ci->num_slices,
+			old_mask);
 	}
 
 	if (!bh_data) {
@@ -1055,11 +1044,7 @@ static ssize_t write_small_file(struct inode *inode,
 	sync_dirty_buffer(bh_data);
 	brelse(bh_data);
 	bh_data = NULL;
-
-	pr_info("buffer marked dirty and syncing\n");
 	ret = count;
-
-	pr_info("wrote %zd bytes at pos %lld\n", count, pos);
 
 	/* Update inode metadata */
 	inode->i_size = new_size;
@@ -1068,18 +1053,12 @@ static ssize_t write_small_file(struct inode *inode,
 	ci->index_block = (block_to_write << 5) + slice_to_write;
 	mark_inode_dirty(inode);
 
-	pr_info("inode metadata updated\n");
-
 	/* Update file position */
 	iocb->ki_pos = pos;
 
 	goto out;
 out:
-
-	pr_info("at out section\n");
-	pr_info("bh_index: %p, bh_data: %p, ret: %ld\n", bh_index, bh_data,
-		ret);
-
+	pr_info("returning : %lu", ret);
 	if (bh_index)
 		brelse(bh_index);
 	if (bh_data)
