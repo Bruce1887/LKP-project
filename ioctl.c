@@ -1,3 +1,4 @@
+#include <asm-generic/errno-base.h>
 #include <linux/fs.h>
 #include <linux/kernel.h>
 #include <linux/kobject.h>
@@ -8,16 +9,21 @@
 
 static int major;
 
-static long ouichefs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static long ouichefs_ioctl(struct file *dev_file, unsigned int cmd, unsigned long arg)
 {
 	if (cmd == OUICHEFS_DEBUG_IOCTL) {
-		uint32_t value;
-		if (copy_from_user(&value ,(struct ouichefs_debug_ioctl *) arg, sizeof(value)))
-		{
+		struct ouichefs_debug_ioctl value;
+		if (copy_from_user(&value ,(struct ouichefs_debug_ioctl *) arg, sizeof(struct ouichefs_debug_ioctl))) {
 				pr_err("Failed to read value\n");
 				return -EFAULT;
 		}
-		struct file *file = fget(value);
+
+		if (!value.data) {
+			pr_err("data should not be null");
+			return -EINVAL;
+		}
+
+		struct file *file = fget(value.target_file);
 		if (!file) {
 			pr_err("File not found");
 			return -ENOENT;
@@ -26,6 +32,8 @@ static long ouichefs_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 		struct super_block *sb = inode->i_sb;
 		struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 		struct buffer_head *bh_data;
+
+		// TODO: check if file is from ouichefs
 
 		if (inode->i_blocks != 0) {
 			pr_err("Not a sliced file");
@@ -40,10 +48,9 @@ static long ouichefs_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 			return -EIO;
 		}
 
-		char tmp[128];
-		for (int i = 0; i < 32; i++) {
-				strncpy(tmp, bh_data->b_data + i * 128, 128);
-				pr_info("line1: %s", tmp);
+		if (copy_to_user(value.data, bh_data->b_data, OUICHEFS_SLICE_SIZE * 32)) {
+				pr_err("Failed to write value\n");
+				return -EFAULT;
 		}
 
 		brelse(bh_data);
@@ -55,15 +62,30 @@ static long ouichefs_ioctl(struct file *file, unsigned int cmd, unsigned long ar
 	}
 }
 
+static int ouichefs_open(struct inode *inode, struct file *file)
+{
+        pr_info("ouichefs_open\n");
+        return 0;
+}
+
+static int ouichefs_release(struct inode *inode, struct file *file)
+{
+        pr_info("ouichefs_release\n");
+        return 0;
+}
+
 static struct file_operations fops =
 {
         .owner          = THIS_MODULE,
+		.open			= ouichefs_open,
+		.release		= ouichefs_release,
         .unlocked_ioctl = ouichefs_ioctl,
 };
 
 void ouichefs_register_device(void)
 {
 	major = register_chrdev(0, "ouichefs", &fops);
+	pr_info("major: %d", major);
 }
 
 void ouichefs_unregister_device(void)
