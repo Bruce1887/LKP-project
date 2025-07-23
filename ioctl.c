@@ -41,6 +41,9 @@ static long ouichefs_ioctl(struct file *dev_file, unsigned int cmd, unsigned lon
 		}
 
 		uint32_t bno = OUICHEFS_SMALL_FILE_GET_BNO(ci);
+		uint32_t slice_no = OUICHEFS_SMALL_FILE_GET_SLICE(ci);
+
+		pr_info("requested file is in slice_no: %u\n", slice_no);
 
 		bh_data = sb_bread(sb, bno);
 		if (!bh_data) {

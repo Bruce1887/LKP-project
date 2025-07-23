@@ -7,6 +7,9 @@
 		if (ret) { \
 			fprintf(stderr, "Error: %s failed with code %d\n", #fn, ret); \
 		} \
+		else { \
+			fprintf(stdout, "Success: %s\n", #fn); \
+		} \
 	} while(0);
 
 #define OUICHEFS_BASE_DIR "/mnt/ouiche/"

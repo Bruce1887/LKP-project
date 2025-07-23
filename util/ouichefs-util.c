@@ -1,5 +1,4 @@
 #include "../ioctl.h"
-#include <cstdlib>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -14,13 +13,22 @@ int main(int argc, char **argv)
 
 	if (strcmp(argv[1], "ioctl") == 0) {
 		if (argc != 3) {
-			fprintf(stderr, "expected just 1 arguments for ioctl command");
+			fprintf(stderr, "expected 1 argument for ioctl command\n");
 			exit(-1);
 		}
+
 		FILE* target_file = fopen(argv[2], "r");
+		if (!target_file) {
+			fprintf(stderr, "couldn't open target file\n");
+			exit(-1);
+		}
 		int target_fd = fileno(target_file);
 
 		FILE* dev_file = fopen("/dev/ouichefs", "r");
+		if (!dev_file) {
+			fprintf(stderr, "couldn't open device file\n");
+			exit(-1);
+		}
 		int dev_fd = fileno(dev_file);
 
 		printf("target_fd: %d, dev_fd: %d\n", target_fd, dev_fd);
@@ -32,6 +40,7 @@ int main(int argc, char **argv)
 		ioctl(dev_fd, OUICHEFS_DEBUG_IOCTL, ouichefs_ioctl);
 
 		for (int i = 0; i < 32; i++) {
+			printf("%02d: ", i);
 			for (int j = 0; j < 128; j++) {
 				printf("%02X", ouichefs_ioctl->data[j + i * 128]);
 			}
