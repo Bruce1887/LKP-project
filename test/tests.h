@@ -13,3 +13,8 @@ int truncate_small_to_small_file(void);
 int truncate_big_to_empty_file(void);
 int truncate_big_to_small_file(void);
 int truncate_big_to_big_file(void);
+
+int slice_expand_1_2(void);
+int slice_expand_next_block(void);
+int slice_truncate_2_1(void);
+
