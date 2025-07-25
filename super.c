@@ -253,6 +253,7 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 		return -EIO;
 	csb = (struct ouichefs_sb_info *)bh->b_data;
 
+	pr_info("magic number: %lu, csb->magic(): %u, le32_to_cpu(csb->magic): %u\n", sb->s_magic,csb->magic,le32_to_cpu(csb->magic));
 	/* Check magic number */
 	if (le32_to_cpu(csb->magic) != sb->s_magic) {
 		pr_err("Wrong magic number\n");

@@ -472,7 +472,10 @@ static ssize_t delete_slice(struct super_block *sb,
 	struct buffer_head *bh = NULL;
 	uint32_t bno = OUICHEFS_SMALL_FILE_GET_BNO(ci);
 	uint32_t slice_no = OUICHEFS_SMALL_FILE_GET_SLICE(ci);
-
+	
+	if(bno == 0) {	
+		return 0;
+	}
 	bh = sb_bread(sb, bno);
 	if (!bh) {
 		pr_err("cannot read slice block %u\n", bno);
@@ -483,7 +486,7 @@ static ssize_t delete_slice(struct super_block *sb,
 
 	/* Mark the slices the file used as free*/
 	*(uint32_t *)bh->b_data |= mask;
-
+	
 	/* Zero out the slices for the small file */
 	memset(bh->b_data + slice_no * OUICHEFS_SLICE_SIZE, 0,
 	       ci->num_slices * OUICHEFS_SLICE_SIZE);
@@ -880,9 +883,10 @@ static uint32_t get_consequitive_free_slices(struct buffer_head **bh_data,
 		DIV_ROUND_UP(file_size, OUICHEFS_SLICE_SIZE);
 	uint32_t mask = ((1U << num_slices_needed) - 1) << 1;
 
-	pr_info("mask: %u",mask);
+
 	for (int i = 1; i <= OUICHEFS_BITMAP_SIZE_BITS - (num_slices_needed);
 	     i++) {
+
 		if ((bitmap | mask) == bitmap) {
 			slice_to_write = i;
 			*(uint32_t *)(*bh_data)->b_data &= ~mask;
@@ -891,8 +895,6 @@ static uint32_t get_consequitive_free_slices(struct buffer_head **bh_data,
 		mask <<= 1;
 	}
 
-	pr_info("slice_to_write: %u, num_slices_needed: %u, bitmap: %u\n",
-		slice_to_write, num_slices_needed, bitmap);
 	if(slice_to_write != 0) {
 		ci->num_slices = (uint16_t) num_slices_needed;
 		mark_inode_dirty(&ci->vfs_inode);

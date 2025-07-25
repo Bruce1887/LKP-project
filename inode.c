@@ -203,7 +203,6 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 
 	inode->i_ctime = inode->i_atime = inode->i_mtime = current_time(inode);
 
-
 	return inode;
 
 	// put_inode:
@@ -322,11 +321,10 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 	uint32_t ino, bno;
 	int i, f_id = -1, nr_subs = 0;
 
-	pr_info("ouichefs_unlink: unlinking '%s'\n", dentry->d_name.name);
-
 	ino = inode->i_ino;
 	bno = OUICHEFS_INODE(inode)->index_block;
-
+	
+	pr_info("unlinking '%s', bno: %u\n", dentry->d_name.name, bno);
 	/* Read parent directory index */
 	bh = sb_bread(sb, OUICHEFS_INODE(dir)->index_block);
 	if (!bh)
@@ -364,7 +362,7 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 	 */
 
 	bool small_file = inode->i_blocks == 0;
-	if (small_file) {
+	if (small_file && !S_ISDIR(inode->i_mode)) {
 		delete_slice_and_clear_inode(ci, sb, sbi);
 		goto clean_inode;
 	}
@@ -415,7 +413,9 @@ clean_inode:
 	mark_inode_dirty(inode);
 
 	/* Free inode and index block from bitmap */
-	put_block(sbi, bno);
+	if (bno != 0)
+		put_block(sbi, bno);
+
 	put_inode(sbi, ino);
 
 	return 0;
