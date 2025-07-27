@@ -438,6 +438,9 @@ static ssize_t allocate_and_init_slice_block(struct super_block *sb,
 		*bh_data = NULL;
 		return -EIO;
 	}
+
+	sbi->nr_sliced_blocks++;
+
 	pr_info("Allocated new sliced block: %u\n", free_block);
 	return (ssize_t)free_block;
 }
@@ -472,10 +475,6 @@ static ssize_t delete_slice(struct super_block *sb,
 	struct buffer_head *bh = NULL;
 	uint32_t bno = OUICHEFS_SMALL_FILE_GET_BNO(ci);
 	uint32_t slice_no = OUICHEFS_SMALL_FILE_GET_SLICE(ci);
-	
-	if(bno == 0) {	
-		return 0;
-	}
 	bh = sb_bread(sb, bno);
 	if (!bh) {
 		pr_err("cannot read slice block %u\n", bno);
@@ -515,6 +514,9 @@ ssize_t delete_slice_and_clear_inode(struct ouichefs_inode_info *ci,
 {
 	ssize_t ret = 0;
 
+		if (OUICHEFS_SMALL_FILE_GET_BNO(ci)) {
+			pr_err("bno is 0");
+		}
 	ret = delete_slice(sb, sbi, ci);
 	if (ret < 0) {
 		pr_err("Failed to delete slice: %zd\n", ret);
@@ -634,6 +636,9 @@ static ssize_t convert_small_to_big(struct kiocb *iocb, struct iov_iter *from)
 		ret = count;
 
 		/* We ignore the return value of deleting the slice here. If data is lost then so be it.*/
+		if (OUICHEFS_SMALL_FILE_GET_BNO(ci)) {
+			pr_err("bno is 0");
+		}
 		delete_slice(sb, sbi, ci);
 	} else {
 		pr_err("Failed to write big file: %zd\n", ret);

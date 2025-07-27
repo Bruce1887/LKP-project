@@ -72,14 +72,17 @@ struct ouichefs_sb_info {
 	uint32_t nr_istore_blocks; /* Number of inode store blocks */
 	uint32_t nr_ifree_blocks; /* Number of inode free bitmap blocks */
 	uint32_t nr_bfree_blocks; /* Number of block free bitmap blocks */
+	uint32_t nr_sliced_blocks; /* Number of sliced blocks */
 
 	uint32_t nr_free_inodes; /* Number of free inodes */
 	uint32_t nr_free_blocks; /* Number of free blocks */
 
-	unsigned long *ifree_bitmap; /* In-memory free inodes bitmap */
-	unsigned long *bfree_bitmap; /* In-memory free blocks bitmap */
+	uint32_t nr_used_slices; /* Number of used slices */
 
 	uint32_t s_free_sliced_blocks; /* Number of the first free sliced block (0 if there is none) */
+
+	unsigned long *ifree_bitmap; /* In-memory free inodes bitmap */
+	unsigned long *bfree_bitmap; /* In-memory free blocks bitmap */
 
 	struct kobject s_kobj; /* sysfs kobject */
 	struct super_block *

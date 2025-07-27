@@ -17,18 +17,72 @@ static struct kobject *ouichefs_root;
 static loff_t total_data_size(struct ouichefs_sb_info *sbi)
 {
 	loff_t size = 0;
+	uint32_t inodes = sbi->nr_inodes - sbi->nr_free_inodes;
 
-	// TODO: lock?
-	for (int i = 0; i < sbi->nr_blocks; i++) {
+	for (int i = 0; i < inodes; i++) {
 		struct inode *inode = ouichefs_iget(sbi->s_sb, i);
 		if (!inode) {
 			pr_err("%s: failed to read inode\n", __func__);
+			continue;
 		}
 
 		size += inode->i_size;
 	}
 
 	return size;
+}
+
+static uint32_t total_file_count(struct ouichefs_sb_info *sbi)
+{
+	uint32_t count = 0;
+	uint32_t inodes = sbi->nr_inodes - sbi->nr_free_inodes;
+
+	for (int i = 0; i < inodes; i++) {
+		struct inode *inode = ouichefs_iget(sbi->s_sb, i);
+		if (!inode) {
+			pr_err("%s: failed to read inode\n", __func__);
+			continue;
+		}
+
+		struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
+		if (!ci) {
+			pr_err("%s: failed to read ouichefs inode\n", __func__);
+			continue;
+		}
+
+		if (S_ISDIR(inode->i_mode)) {
+			continue;
+		}
+
+		count++;
+	}
+
+	return count;
+}
+
+static uint32_t total_small_file_count(struct ouichefs_sb_info *sbi)
+{
+	uint32_t count = 0;
+	uint32_t inodes = sbi->nr_inodes - sbi->nr_free_inodes;
+
+	for (int i = 0; i < inodes; i++) {
+		struct inode *inode = ouichefs_iget(sbi->s_sb, i);
+		if (!inode) {
+			pr_err("%s: failed to read inode\n", __func__);
+			continue;
+		}
+
+		if (S_ISDIR(inode->i_mode)) {
+			continue;
+		}
+
+
+		if (inode->i_blocks == 0) {
+			count++;
+		}
+	}
+
+	return count;
 }
 
 static loff_t total_used_size(struct ouichefs_sb_info *sbi)
@@ -49,7 +103,8 @@ static ssize_t used_blocks_show(struct kobject *kobj, struct kobj_attribute *att
 
 static ssize_t sliced_blocks_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "todo");
+	struct ouichefs_sb_info *sbi = SBI_FROM_KOBJ(kobj);
+	return snprintf(buf, PAGE_SIZE, "%u", sbi->nr_sliced_blocks);
 }
 
 static ssize_t total_free_slices_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
@@ -59,12 +114,14 @@ static ssize_t total_free_slices_show(struct kobject *kobj, struct kobj_attribut
 
 static ssize_t files_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%u", SBI_FROM_KOBJ(kobj)->nr_inodes);
+	struct ouichefs_sb_info *sbi = SBI_FROM_KOBJ(kobj);
+	return snprintf(buf, PAGE_SIZE, "%u", total_file_count(sbi));
 }
 
 static ssize_t small_files_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "todo");
+	struct ouichefs_sb_info *sbi = SBI_FROM_KOBJ(kobj);
+	return snprintf(buf, PAGE_SIZE, "%u", total_small_file_count(sbi));
 }
 
 static ssize_t total_data_size_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)

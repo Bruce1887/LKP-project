@@ -367,6 +367,9 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 		goto clean_inode;
 	}
 
+	if (bno == 0) {
+		panic("bno zero first");
+	}
 	bh = sb_bread(sb, bno);
 	if (!bh)
 		goto clean_inode;
@@ -415,7 +418,6 @@ clean_inode:
 	/* Free inode and index block from bitmap */
 	if (bno != 0)
 		put_block(sbi, bno);
-
 	put_inode(sbi, ino);
 
 	return 0;

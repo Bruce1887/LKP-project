@@ -47,13 +47,18 @@ struct ouichefs_superblock {
 	uint32_t nr_inodes; /* Total number of inodes */
 
 	uint32_t nr_istore_blocks; /* Number of inode store blocks */
-	uint32_t nr_ifree_blocks; /* Number of free inodes bitmask blocks */
-	uint32_t nr_bfree_blocks; /* Number of free blocks bitmask blocks */
+	uint32_t nr_ifree_blocks; /* Number of inode free bitmap blocks */
+	uint32_t nr_bfree_blocks; /* Number of block free bitmap blocks */
+	uint32_t nr_sliced_blocks; /* Number of sliced blocks */
 
 	uint32_t nr_free_inodes; /* Number of free inodes */
 	uint32_t nr_free_blocks; /* Number of free blocks */
 
-	char padding[4064]; /* Padding to match block size */
+	uint32_t nr_used_slices; /* Number of used slices */
+
+	uint32_t s_free_sliced_blocks; /* Number of the first free sliced block (0 if there is none) */
+
+	char padding[4052]; /* Padding to match block size */
 };
 
 struct ouichefs_file_index_block {
@@ -115,8 +120,11 @@ static struct ouichefs_superblock *write_superblock(int fd,
 	sb->nr_istore_blocks = htole32(nr_istore_blocks);
 	sb->nr_ifree_blocks = htole32(nr_ifree_blocks);
 	sb->nr_bfree_blocks = htole32(nr_bfree_blocks);
+	sb->nr_sliced_blocks = htole32(0);
 	sb->nr_free_inodes = htole32(nr_inodes - 1);
 	sb->nr_free_blocks = htole32(nr_data_blocks - 1);
+	sb->nr_used_slices = htole32(0);
+	sb->s_free_sliced_blocks = htole32(0);
 
 	ret = write(fd, sb, sizeof(struct ouichefs_superblock));
 	if (ret != sizeof(struct ouichefs_superblock)) {
