@@ -165,6 +165,7 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 
 	/* Get a new free inode */
 	ino = get_free_inode(sbi);
+	pr_info("new inode: %u, dir->i_blocks: %llu\n", ino, dir->i_blocks);
 	if (!ino)
 		return ERR_PTR(-ENOSPC);
 	inode = ouichefs_iget(sb, ino);
@@ -174,18 +175,21 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 	}
 	ci = OUICHEFS_INODE(inode);
 
-	/* #### OLD CODE #### */
-	/* Get a free block for this new inode's index */
-	// bno = get_free_block(sbi);
-	// if (!bno) {
-	// 	ret = -ENOSPC;
-	// 	goto put_inode;
-	// }
-	// ci->index_block = bno;
+	/* NEW NEW CODE (NEW 2x) - DIRECTORIES NEED INDEX BLOCK IMMEDIATELY */
+	if (S_ISDIR(mode)) {
+		/* Directories need index block immediately */
+		uint32_t bno = get_free_block(sbi);
+		if (!bno) {
+			ret = -ENOSPC;
+			goto put_ino;
+		}
+		ci->index_block = bno;
+		pr_info("Allocated index block %u for new directory\n", bno);
 
-	/* #### NEW CODE #### */
-	/* We set the index block of the inode when writing to the file instead of when creating the Inode*/
-	ci->index_block = 0;
+	} else {
+		/* Files get index block when first written to */
+		ci->index_block = 0;
+	}
 	ci->num_slices = 0;
 
 	/* Initialize inode */
@@ -194,6 +198,7 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 	if (S_ISDIR(mode)) {
 		inode->i_size = OUICHEFS_BLOCK_SIZE;
 		inode->i_fop = &ouichefs_dir_ops;
+		inode->i_blocks = 1; // One block for the index block
 	} else if (S_ISREG(mode)) {
 		inode->i_size = 0;
 		inode->i_fop = &ouichefs_file_ops;
@@ -256,6 +261,8 @@ static int ouichefs_create(struct mnt_idmap *idmap, struct inode *dir,
 		ret = PTR_ERR(inode);
 		goto end;
 	}
+	pr_info("NEW INODE: parent dir inode: %lu, parent dir->i_blocks: %llu\n",
+		dir->i_ino, dir->i_blocks);
 
 	/*
 	 * Scrub index_block for new file/directory to avoid previous data
@@ -323,8 +330,8 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 
 	ino = inode->i_ino;
 	bno = OUICHEFS_INODE(inode)->index_block;
-	
-	pr_info("unlinking '%s', bno: %u\n", dentry->d_name.name, bno);
+
+	pr_info("unlinking '%s', index_block: %u\n", dentry->d_name.name, bno);
 	/* Read parent directory index */
 	bh = sb_bread(sb, OUICHEFS_INODE(dir)->index_block);
 	if (!bh)
@@ -361,8 +368,12 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 	 * anyway), just put the block and continue.
 	 */
 
-	bool small_file = inode->i_blocks == 0;
-	if (small_file && !S_ISDIR(inode->i_mode)) {
+	bool is_dir = S_ISDIR(inode->i_mode);
+	bool small_file = inode->i_blocks == 0 && !is_dir;
+	pr_info("small_file: %d, inode->i_blocks: %llu, ci->index_block: %u, !is_dir: %d\n",
+		small_file, inode->i_blocks, ci->index_block, !is_dir);
+
+	if (small_file) {
 		delete_slice_and_clear_inode(ci, sb, sbi);
 		goto clean_inode;
 	}
@@ -532,6 +543,7 @@ relse_new:
 static int ouichefs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 			  struct dentry *dentry, umode_t mode)
 {
+	pr_info("mkdir '%s'\n", dentry->d_name.name);
 	return ouichefs_create(NULL, dir, dentry, mode | S_IFDIR, 0);
 }
 
@@ -541,6 +553,9 @@ static int ouichefs_rmdir(struct inode *dir, struct dentry *dentry)
 	struct inode *inode = d_inode(dentry);
 	struct buffer_head *bh;
 	struct ouichefs_dir_block *dblock;
+
+	pr_info("rmdir '%s',inode->i_blocks: %llu\n", dentry->d_name.name,
+		inode->i_blocks);
 
 	/* If the directory is not empty, fail */
 	if (inode->i_nlink > 2)
