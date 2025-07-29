@@ -18,6 +18,7 @@
 #define OUICHEFS_FILENAME_LEN 28
 #define OUICHEFS_MAX_SUBFILES 128
 #define OUICHEFS_SLICE_SIZE 128
+#define OUICHEFS_SLICES_PER_SLICED_BLOCK 31 
 
 /*
  * ouiche_fs partition layout

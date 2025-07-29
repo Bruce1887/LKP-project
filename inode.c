@@ -165,7 +165,7 @@ static struct inode *ouichefs_new_inode(struct inode *dir, mode_t mode)
 
 	/* Get a new free inode */
 	ino = get_free_inode(sbi);
-	pr_info("new inode: %u, dir->i_blocks: %llu\n", ino, dir->i_blocks);
+	// pr_info("new inode: %u, dir->i_blocks: %llu\n", ino, dir->i_blocks);
 	if (!ino)
 		return ERR_PTR(-ENOSPC);
 	inode = ouichefs_iget(sb, ino);
@@ -244,6 +244,11 @@ static int ouichefs_create(struct mnt_idmap *idmap, struct inode *dir,
 	/* Read parent directory index */
 	ci_dir = OUICHEFS_INODE(dir);
 	sb = dir->i_sb;
+
+	if (ci_dir->index_block == 0) {
+		pr_err("CRITICAL: Attempted to access block 0 (superblock) as data block!\n");
+		dump_stack();
+	}
 	bh = sb_bread(sb, ci_dir->index_block);
 	if (!bh)
 		return -EIO;
@@ -261,23 +266,26 @@ static int ouichefs_create(struct mnt_idmap *idmap, struct inode *dir,
 		ret = PTR_ERR(inode);
 		goto end;
 	}
-	pr_info("NEW INODE: parent dir inode: %lu, parent dir->i_blocks: %llu\n",
-		dir->i_ino, dir->i_blocks);
+	// pr_info("NEW INODE: parent dir inode: %lu, parent dir->i_blocks: %llu\n",
+	// 	dir->i_ino, dir->i_blocks);
 
 	/*
 	 * Scrub index_block for new file/directory to avoid previous data
 	 * messing with new file/directory.
+	 * EDIT: THIS IS BAD. WE DONT WANT TO SCRUB NEW INODES AS THEY DONT HAVE AN INDEX BLOCK UNLESS THEY ARE DIRECTORIES.
 	 */
-	bh2 = sb_bread(sb, OUICHEFS_INODE(inode)->index_block);
-	if (!bh2) {
-		ret = -EIO;
-		goto iput;
-	}
-	fblock = (char *)bh2->b_data;
-	memset(fblock, 0, OUICHEFS_BLOCK_SIZE);
-	mark_buffer_dirty(bh2);
-	brelse(bh2);
 
+	if (S_ISDIR(mode)) {
+		bh2 = sb_bread(sb, OUICHEFS_INODE(inode)->index_block);
+		if (!bh2) {
+			ret = -EIO;
+			goto iput;
+		}
+		fblock = (char *)bh2->b_data;
+		memset(fblock, 0, OUICHEFS_BLOCK_SIZE);
+		mark_buffer_dirty(bh2);
+		brelse(bh2);
+	}
 	/* Find first free slot in parent index and register new inode */
 	for (i = 0; i < OUICHEFS_MAX_SUBFILES; i++)
 		if (dblock->files[i].inode == 0)
@@ -299,7 +307,6 @@ static int ouichefs_create(struct mnt_idmap *idmap, struct inode *dir,
 	d_instantiate(dentry, inode);
 
 	return 0;
-
 iput:
 	put_block(OUICHEFS_SB(sb), OUICHEFS_INODE(inode)->index_block);
 	put_inode(OUICHEFS_SB(sb), inode->i_ino);
@@ -333,6 +340,11 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 
 	pr_info("unlinking '%s', index_block: %u\n", dentry->d_name.name, bno);
 	/* Read parent directory index */
+
+	if (OUICHEFS_INODE(dir)->index_block == 0) {
+		pr_err("CRITICAL: Attempted to access block 0 (superblock) as data block!\n");
+		dump_stack();
+	}
 	bh = sb_bread(sb, OUICHEFS_INODE(dir)->index_block);
 	if (!bh)
 		return -EIO;
@@ -393,6 +405,10 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 		if (!file_block->blocks[i])
 			continue;
 
+		if (le32_to_cpu(file_block->blocks[i]) == 0) {
+			pr_err("CRITICAL: Attempted to access block 0 (superblock) as data block!\n");
+			dump_stack();
+		}
 		bh2 = sb_bread(sb, le32_to_cpu(file_block->blocks[i]));
 		if (!bh2)
 			goto put_block;
@@ -543,7 +559,7 @@ relse_new:
 static int ouichefs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 			  struct dentry *dentry, umode_t mode)
 {
-	pr_info("mkdir '%s'\n", dentry->d_name.name);
+	pr_info("creating directory '%s'\n", dentry->d_name.name);
 	return ouichefs_create(NULL, dir, dentry, mode | S_IFDIR, 0);
 }
 
@@ -560,6 +576,11 @@ static int ouichefs_rmdir(struct inode *dir, struct dentry *dentry)
 	/* If the directory is not empty, fail */
 	if (inode->i_nlink > 2)
 		return -ENOTEMPTY;
+
+	if (OUICHEFS_INODE(inode)->index_block == 0) {
+		pr_err("CRITICAL: Attempted to access block 0 (superblock) as data block!\n");
+		dump_stack();
+	}
 	bh = sb_bread(sb, OUICHEFS_INODE(inode)->index_block);
 	if (!bh)
 		return -EIO;
