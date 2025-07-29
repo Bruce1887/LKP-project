@@ -497,6 +497,9 @@ static ssize_t delete_slice(struct super_block *sb,
 		return -EIO;
 	}
 
+	pr_info("bno: %u, bh->b_blocknr: %u\n", OUICHEFS_SMALL_FILE_GET_BNO(ci),
+		bno);
+
 	uint32_t mask = ((1U << ci->num_slices) - 1) << (slice_no);
 
 	/* Mark the slices the file used as free*/
@@ -511,8 +514,63 @@ static ssize_t delete_slice(struct super_block *sb,
 	sbi->nr_used_slices -= ci->num_slices;
 	pr_info("sbi->nr_used_slices: %u\n", sbi->nr_used_slices);
 
+	mark_buffer_dirty(bh);
+	brelse(bh);
+	bh = NULL;
+
+	/* Iterate over all sliced block
+	   Check if blocks are empty and if so free and repoint pointers
+	*/
+	uint32_t next_bno = sbi->s_free_sliced_blocks;
+	struct buffer_head *bh_prev = NULL;
+	while (next_bno) {
+		/* Read next sliced block */
+		bh = sb_bread(sb, next_bno);
+		if (!bh) {
+			pr_err("Failed to read next sliced block %u\n",
+			       next_bno);
+			brelse(bh_prev);
+			return -EIO;
+		}
+		next_bno = OUICHEFS_SLICED_BLOCK_SB_NEXT(bh);
+
+		/* Check if block is free */
+		if (OUICHEFS_BITMAP_IS_ALL_FREE(bh)) {
+			pr_info("sliced block %llu is completely free, freeing it\n",
+				bh->b_blocknr);
+			if (bh_prev) {
+				OUICHEFS_SLICED_BLOCK_SB_SET_NEXT(bh_prev,
+								  next_bno);
+				mark_buffer_dirty(bh_prev);
+				brelse(bh_prev);
+				bh_prev = NULL;
+			} else {
+				/* This is the first sliced block, update sbi->s_free_sliced_blocks */
+				sbi->s_free_sliced_blocks = next_bno;
+				// put_block(sbi, bh);
+			}
+
+			sbi->nr_sliced_blocks--;
+			pr_info("sbi->nr_sliced_blocks: %u\n",
+				sbi->nr_sliced_blocks);
+			memset(bh->b_data, 0, OUICHEFS_BLOCK_SIZE);
+			put_block(sbi, bh->b_blocknr);
+			mark_buffer_dirty(bh);
+			brelse(bh);
+			bh = NULL;
+		} else {
+			/* Sliced block not empty, go to next */
+			if (bh_prev) {
+				brelse(bh_prev);
+				bh_prev = NULL;
+			}
+			bh_prev = bh;
+		}
+	}
+
 	/* Check if this sliced block is now completely vacant.
 	If so, update sbi->s_free_sliced_blocks to point to whatever block comes next (0 or another block) */
+	/* 
 	if (OUICHEFS_BITMAP_IS_ALL_FREE(bh) &&
 	    bno == sbi->s_free_sliced_blocks) {
 		
@@ -527,9 +585,9 @@ static ssize_t delete_slice(struct super_block *sb,
 		sbi->nr_sliced_blocks--;
 		pr_info("sbi->nr_sliced_blocks: %u\n", sbi->nr_sliced_blocks);
 	}
-
 	mark_buffer_dirty(bh);
 	brelse(bh);
+	*/
 	return 0;
 }
 
