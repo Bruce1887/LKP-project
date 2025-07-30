@@ -457,10 +457,7 @@ static bool is_new(uint32_t index_block)
 
 static bool will_be_small(loff_t new_size)
 {
-	return new_size <=
-	       OUICHEFS_BLOCK_SIZE -
-		       OUICHEFS_SLICE_SIZE *
-			       2; /* times 2, because if we can only fit one sliced file within a block its no point in the block being sliced.*/
+	return new_size <= OUICHEFS_BLOCK_SIZE - OUICHEFS_SLICE_SIZE;
 }
 
 static ssize_t write_big_file(struct inode *inode,
@@ -521,35 +518,42 @@ static ssize_t delete_slice(struct super_block *sb,
 	/* Iterate over all sliced block
 	   Check if blocks are empty and if so free and repoint pointers
 	*/
-	uint32_t next_bno = sbi->s_free_sliced_blocks;
+	uint32_t current_bno = sbi->s_free_sliced_blocks;
 	struct buffer_head *bh_prev = NULL;
-	while (next_bno) {
+	while (current_bno) {
+		pr_info("current_bno: %u\n", current_bno);
 		/* Read next sliced block */
-		bh = sb_bread(sb, next_bno);
+		bh = sb_bread(sb, current_bno);
 		if (!bh) {
 			pr_err("Failed to read next sliced block %u\n",
-			       next_bno);
+			       current_bno);
 			brelse(bh_prev);
 			return -EIO;
 		}
-		next_bno = OUICHEFS_SLICED_BLOCK_SB_NEXT(bh);
+
+		/* Fetch next_bno now (we might scrub the block later)*/
+		uint32_t next_bno = OUICHEFS_SLICED_BLOCK_SB_NEXT(bh);
 
 		/* Check if block is free */
 		if (OUICHEFS_BITMAP_IS_ALL_FREE(bh)) {
 			pr_info("sliced block %llu is completely free, freeing it\n",
 				bh->b_blocknr);
+
+			/* Repoint "pointers" */
+
 			if (bh_prev) {
 				OUICHEFS_SLICED_BLOCK_SB_SET_NEXT(bh_prev,
 								  next_bno);
+				pr_info("Setting next_bno %u in previous block %llu\n",
+					next_bno, bh_prev->b_blocknr);
 				mark_buffer_dirty(bh_prev);
-				brelse(bh_prev);
-				bh_prev = NULL;
 			} else {
-				/* This is the first sliced block, update sbi->s_free_sliced_blocks */
+				pr_info("No previous sliced block, setting s_free_sliced_blocks to %u\n",
+					next_bno);
 				sbi->s_free_sliced_blocks = next_bno;
-				// put_block(sbi, bh);
 			}
 
+			/* Cleanup bh */
 			sbi->nr_sliced_blocks--;
 			pr_info("sbi->nr_sliced_blocks: %u\n",
 				sbi->nr_sliced_blocks);
@@ -560,34 +564,32 @@ static ssize_t delete_slice(struct super_block *sb,
 			bh = NULL;
 		} else {
 			/* Sliced block not empty, go to next */
+			pr_info("sliced block %llu is not empty, keeping it\n",
+				bh->b_blocknr);
+			
+			/* Release reference to previous block (if there is one) */
 			if (bh_prev) {
 				brelse(bh_prev);
 				bh_prev = NULL;
 			}
+
 			bh_prev = bh;
+			bh = NULL;
 		}
+		current_bno = next_bno;
 	}
 
-	/* Check if this sliced block is now completely vacant.
-	If so, update sbi->s_free_sliced_blocks to point to whatever block comes next (0 or another block) */
-	/* 
-	if (OUICHEFS_BITMAP_IS_ALL_FREE(bh) &&
-	    bno == sbi->s_free_sliced_blocks) {
-		
-		pr_info("sliced block %u is now completely free, updating sbi->s_free_sliced_blocks\n",
-			bno);
-		sbi->s_free_sliced_blocks = OUICHEFS_SLICED_BLOCK_SB_NEXT(bh);
-		pr_info("after update: sbi->s_free_sliced_blocks: %u\n",
-			sbi->s_free_sliced_blocks);
-		memset(bh->b_data, 0, OUICHEFS_BLOCK_SIZE);
+	pr_info("at end: bh: %p, bh_prev: %p\n", bh, bh_prev);
 
-		put_block(sbi, bno);
-		sbi->nr_sliced_blocks--;
-		pr_info("sbi->nr_sliced_blocks: %u\n", sbi->nr_sliced_blocks);
+	if (bh) {
+		brelse(bh);
+		bh = NULL;
 	}
-	mark_buffer_dirty(bh);
-	brelse(bh);
-	*/
+	if (bh_prev) {
+		brelse(bh_prev);
+		bh_prev = NULL;
+	}
+
 	return 0;
 }
 
@@ -608,7 +610,7 @@ ssize_t delete_slice_and_clear_inode(struct ouichefs_inode_info *ci,
 		return ret;
 	}
 
-	pr_info("Slice deleted successfully\n");
+	pr_info("Slice deleted successfully\n\n");
 
 	/* Reset index block */
 	ci->index_block = 0;
@@ -765,27 +767,21 @@ static ssize_t custom_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	if (is_new(ci->index_block)) {
 		/* Writing to a file that has never been written to */
 		if (will_be_small(new_size)) {
-			pr_info("using write_small_file implementation\n");
 			return write_small_file(inode, ci, sb, sbi, iocb, from);
 		} else {
-			pr_info("using write_big_file implementation\n");
 			return write_big_file(inode, ci, sb, sbi, iocb, from);
 		}
 	} else {
 		/* Writing to a file has previously been written to */
 		if (!is_small_file(&ci->vfs_inode)) {
-			pr_info("using write_big_file implementation\n");
 			return write_big_file(inode, ci, sb, sbi, iocb, from);
 		} else if (will_be_small(new_size)) {
-			pr_info("using write_small_file implementation\n");
 			return write_small_file(inode, ci, sb, sbi, iocb, from);
 		} else if (!will_be_small(new_size) &&
 			   is_small_file(&ci->vfs_inode)) {
 			return convert_small_to_big(iocb, from);
 		}
 	}
-	/* "default:" */
-	pr_err("Unexpected case in custom_write_iter\n");
 	return -EINVAL;
 }
 
@@ -1016,14 +1012,9 @@ static ssize_t write_small_file(struct inode *inode,
 	uint32_t slice_to_write = 0;
 	loff_t old_size = inode->i_size;
 	loff_t new_size = max((loff_t)(pos + count), old_size);
-	pr_info("old_size: %lld, pos: %lld, count: %zu\n", old_size, pos,
-		count);
 
 	uint32_t old_num_slices = DIV_ROUND_UP(old_size, OUICHEFS_SLICE_SIZE);
 	uint32_t new_num_slices = DIV_ROUND_UP(new_size, OUICHEFS_SLICE_SIZE);
-
-	pr_info("new_num_slices: %u, old_num_slices: %u\n", new_num_slices,
-		old_num_slices);
 
 	/* Check if this inode's index_block field has NOT yet been set */
 	if (ci->index_block == 0) {
@@ -1257,8 +1248,9 @@ static ssize_t write_small_file(struct inode *inode,
 		goto out;
 	}
 
+	pr_info("BEFORE sbi->nr_used_slices: %u\n", sbi->nr_used_slices);
 	sbi->nr_used_slices += new_num_slices;
-	pr_info("sbi->nr_used_slices: %u\n", sbi->nr_used_slices);
+	pr_info("AFTER sbi->nr_used_slices: %u\n", sbi->nr_used_slices);
 
 	/* Mark buffer dirty and sync */
 	mark_buffer_dirty(bh_data);
@@ -1272,7 +1264,7 @@ static ssize_t write_small_file(struct inode *inode,
 	inode->i_mtime = inode->i_ctime = current_time(inode);
 
 	ci->index_block = (block_to_write << 5) + slice_to_write;
-	pr_info("ci->index_block: %u\n", ci->index_block);
+	pr_info("ci->index_block: %u\n\n", ci->index_block);
 	mark_inode_dirty(inode);
 
 	/* Update file position */
