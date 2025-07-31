@@ -25,6 +25,7 @@ static loff_t total_data_size(struct ouichefs_sb_info *sbi)
 		}
 
 		size += inode->i_size;
+		iput(inode);
 	}
 
 	return size;
@@ -45,14 +46,17 @@ static uint32_t total_file_count(struct ouichefs_sb_info *sbi)
 		struct ouichefs_inode_info *ci = OUICHEFS_INODE(inode);
 		if (!ci) {
 			pr_err("%s: failed to read ouichefs inode\n", __func__);
+			iput(inode);
 			continue;
 		}
 
 		if (S_ISDIR(inode->i_mode)) {
+			iput(inode);
 			continue;
 		}
 
 		count++;
+		iput(inode);
 	}
 
 	return count;
@@ -70,6 +74,7 @@ static uint32_t total_small_file_count(struct ouichefs_sb_info *sbi)
 		struct inode *inode = ouichefs_iget(sbi->s_sb, i);
 		if (!inode) {
 			pr_err("%s: failed to read inode\n", __func__);
+			iput(inode);
 			continue;
 		}
 		pr_info("inode %lu: i_blocks: %llu, index_block: %u, is_dir: %u\n",
@@ -78,12 +83,14 @@ static uint32_t total_small_file_count(struct ouichefs_sb_info *sbi)
 			S_ISDIR(inode->i_mode));
 
 		if (S_ISDIR(inode->i_mode)) {
+			iput(inode);
 			continue;
 		}
 
 		if (inode->i_blocks == 0) {
 			count++;
 		}
+		iput(inode);
 	}
 
 	return count;
@@ -105,8 +112,9 @@ static ssize_t used_blocks_show(struct kobject *kobj,
 				struct kobj_attribute *attr, char *buf)
 {
 	struct ouichefs_sb_info *sbi = SBI_FROM_KOBJ(kobj);
-	pr_info("%s: sbi->nr_blocks: %u, sbi->nr_free_blocks: %u\n",
-		__func__, sbi->nr_blocks, sbi->nr_free_blocks);
+	pr_info("%s: sbi->nr_blocks: %u, sbi->nr_free_blocks: %u, sbi->nr_blocks - sbi->nr_free_blocks: %u\n",
+		__func__, sbi->nr_blocks, sbi->nr_free_blocks,
+		sbi->nr_blocks - sbi->nr_free_blocks);
 	return snprintf(buf, PAGE_SIZE, "%u",
 			sbi->nr_blocks - sbi->nr_free_blocks);
 }
