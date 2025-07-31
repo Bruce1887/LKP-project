@@ -18,3 +18,6 @@ int slice_expand_1_2(void);
 int slice_expand_next_block(void);
 int slice_truncate_2_1(void);
 
+int remove_empty_file(void);
+int remove_small_file(void);
+int remove_big_file(void);
