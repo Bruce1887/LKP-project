@@ -17,7 +17,7 @@ static loff_t total_data_size(struct ouichefs_sb_info *sbi)
 	loff_t size = 0;
 	uint32_t inodes = sbi->nr_inodes - sbi->nr_free_inodes;
 
-	for (int i = 0; i < inodes; i++) {
+	for (int i = 1; i < inodes; i++) {
 		struct inode *inode = ouichefs_iget(sbi->s_sb, i);
 		if (!inode) {
 			pr_err("%s: failed to read inode\n", __func__);
@@ -36,7 +36,7 @@ static uint32_t total_file_count(struct ouichefs_sb_info *sbi)
 	uint32_t count = 0;
 	uint32_t inodes = sbi->nr_inodes - sbi->nr_free_inodes;
 
-	for (int i = 0; i < inodes; i++) {
+	for (int i = 1; i < inodes; i++) {
 		struct inode *inode = ouichefs_iget(sbi->s_sb, i);
 		if (!inode) {
 			pr_err("%s: failed to read inode\n", __func__);

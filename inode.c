@@ -387,6 +387,8 @@ static int ouichefs_unlink(struct inode *dir, struct dentry *dentry)
 
 	if (small_file) {
 		delete_slice_and_clear_inode(ci, sb, sbi);
+		pr_info("(sbi->nr_blocks - sbi->nr_free_blocks) * BLOCK_SIZE: %u\n",
+			(sbi->nr_blocks - sbi->nr_free_blocks) * BLOCK_SIZE);
 		goto clean_inode;
 	}
 
@@ -443,8 +445,9 @@ clean_inode:
 	mark_inode_dirty(inode);
 
 	/* Free inode and index block from bitmap */
-	if (bno != 0)
+	if (bno != 0 && !small_file)
 		put_block(sbi, bno);
+
 	put_inode(sbi, ino);
 
 	return 0;

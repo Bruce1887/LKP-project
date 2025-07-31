@@ -1114,8 +1114,8 @@ static ssize_t write_small_file(struct inode *inode,
 		uint32_t old_slice_no = OUICHEFS_SMALL_FILE_GET_SLICE(ci);
 		uint32_t old_index_block = ci->index_block;
 
-		if(ci->num_slices == 0) {
-			pr_err("num_slices is 0, this should never be the case here!\n");		
+		if (ci->num_slices == 0) {
+			pr_err("num_slices is 0, this should never be the case here!\n");
 			ret = -EIO;
 			goto out;
 		}
@@ -1229,22 +1229,6 @@ static ssize_t write_small_file(struct inode *inode,
 				inode->i_size = old_size;
 				iocb->ki_pos = pos;
 			}
-
-			// uint32_t old_mask = ((1U << num_slices) - 1)
-			// 		    << (slice_no);
-			// *(uint32_t *)bh_data->b_data |= old_mask;
-
-			// /* clean memory for debugging purposes, may be removed in the future */
-			// memset(bh_data->b_data + slice_no * OUICHEFS_SLICE_SIZE,
-			//        0, num_slices * OUICHEFS_SLICE_SIZE);
-			// mark_buffer_dirty(bh_data);
-			// sync_dirty_buffer(bh_data);
-			// brelse(bh_data);
-
-			// sbi->nr_used_slices += new_num_slices;
-			// pr_info("sbi->nr_used_slices: %u\n",
-			// 	sbi->nr_used_slices);
-
 			return ret;
 		}
 	}
