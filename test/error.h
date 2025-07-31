@@ -4,3 +4,4 @@
 #define ERR_READ 104
 #define ERR_CMP 105
 #define ERR_OPEN 106
+#define ERR_REMOVE 107

@@ -91,7 +91,7 @@ static uint32_t total_small_file_count(struct ouichefs_sb_info *sbi)
 
 static loff_t total_used_size(struct ouichefs_sb_info *sbi)
 {
-	return sbi->nr_istore_blocks * BLOCK_SIZE;
+	return (sbi->nr_blocks - sbi->nr_free_blocks) * BLOCK_SIZE;
 }
 
 static ssize_t free_blocks_show(struct kobject *kobj,
