@@ -31,6 +31,7 @@ struct inode *ouichefs_iget(struct super_block *sb, unsigned long ino)
 	uint32_t inode_block = (ino / OUICHEFS_INODES_PER_BLOCK) + 1;
 	uint32_t inode_shift = ino % OUICHEFS_INODES_PER_BLOCK;
 	int ret;
+	
 
 	/* Fail if ino is out of range */
 	if (ino >= sbi->nr_inodes)

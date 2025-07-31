@@ -994,7 +994,7 @@ static uint32_t get_consequitive_free_slices(struct buffer_head **bh_data,
 	if (slice_to_write != 0) {
 		ci->num_slices = (uint16_t)num_slices_needed;
 		mark_inode_dirty(&ci->vfs_inode);
-	}
+		}
 	return slice_to_write;
 }
 
@@ -1011,7 +1011,7 @@ static ssize_t write_small_file(struct inode *inode,
 		pos = inode->i_size;
 		pr_info("IOCB_APPEND flag set, pos set to inode->i_size: %lld\n",
 			inode->i_size);
-	}
+	}	
 	ssize_t ret = 0;
 	uint32_t block_to_write = 0;
 	uint32_t slice_to_write = 0;

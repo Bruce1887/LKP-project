@@ -26,7 +26,7 @@ struct dentry *ouichefs_mount(struct file_system_type *fs_type, int flags,
 	if (IS_ERR(dentry))
 		pr_err("'%s' mount failure\n", dev_name);
 	else
-		pr_info("'%s' mount success\n", dev_name);
+		pr_info("'%s' MOUNT SUCCESS!\n", dev_name);
 
 	return dentry;
 }

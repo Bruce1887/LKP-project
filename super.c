@@ -88,7 +88,7 @@ static int ouichefs_write_inode(struct inode *inode,
 	disk_inode->i_blocks = cpu_to_le32(inode->i_blocks);
 	disk_inode->i_nlink = cpu_to_le32(inode->i_nlink);
 	disk_inode->index_block = cpu_to_le32(ci->index_block);
-
+	disk_inode->num_slices = cpu_to_le16(ci->num_slices);
 	mark_buffer_dirty(bh);
 	sync_dirty_buffer(bh);
 	brelse(bh);
@@ -258,11 +258,12 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 		return -EIO;
 	csb = (struct ouichefs_sb_info *)bh->b_data;
 
-	pr_info("magic number: %lu, csb->magic(): %u, le32_to_cpu(csb->magic): %u\n",
-		sb->s_magic, csb->magic, le32_to_cpu(csb->magic));
+	// pr_info("magic number: %lu, csb->magic(): %u, le32_to_cpu(csb->magic): %u\n",
+	//	sb->s_magic, csb->magic, le32_to_cpu(csb->magic));
+
 	/* Check magic number */
-	pr_info("csb->magic: %x, sb->s_magic: %lx\n", le32_to_cpu(csb->magic),
-		sb->s_magic);
+	// pr_info("csb->magic: %x, sb->s_magic: %lx\n", le32_to_cpu(csb->magic),
+	//	sb->s_magic);
 	if (le32_to_cpu(csb->magic) != sb->s_magic) {
 		pr_err("Wrong magic number\n");
 		brelse(bh);
@@ -286,8 +287,8 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->s_sb = sb;
 	sb->s_fs_info = sbi;
 	
-	pr_info("sbi->nr_blocks: %u\n", sbi->nr_blocks);
-	pr_info("sbi->s_free_sliced_blocks: %u\n", sbi->s_free_sliced_blocks);
+	// pr_info("sbi->nr_blocks: %u\n", sbi->nr_blocks);
+	// pr_info("sbi->s_free_sliced_blocks: %u\n", sbi->s_free_sliced_blocks);
 	brelse(bh);
 
 	/* Alloc and copy ifree_bitmap */
