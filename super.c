@@ -89,6 +89,7 @@ static int ouichefs_write_inode(struct inode *inode,
 	disk_inode->i_nlink = cpu_to_le32(inode->i_nlink);
 	disk_inode->index_block = cpu_to_le32(ci->index_block);
 	disk_inode->num_slices = cpu_to_le16(ci->num_slices);
+
 	mark_buffer_dirty(bh);
 	sync_dirty_buffer(bh);
 	brelse(bh);
@@ -118,6 +119,8 @@ static int sync_sb_info(struct super_block *sb, int wait)
 	disk_sb->nr_free_inodes = cpu_to_le32(sbi->nr_free_inodes);
 	disk_sb->nr_free_blocks = cpu_to_le32(sbi->nr_free_blocks);
 	disk_sb->s_free_sliced_blocks = cpu_to_le32(sbi->s_free_sliced_blocks);
+	disk_sb->nr_used_slices = cpu_to_le32(sbi->nr_used_slices);
+	disk_sb->nr_sliced_blocks = cpu_to_le32(sbi->nr_sliced_blocks);
 
 	mark_buffer_dirty(bh);
 	if (wait)
@@ -276,6 +279,9 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 		brelse(bh);
 		return -ENOMEM;
 	}
+
+	pr_info("csb->nr_used_slices: %u\n", le32_to_cpu(csb->nr_used_slices));
+
 	sbi->nr_blocks = le32_to_cpu(csb->nr_blocks);
 	sbi->nr_inodes = le32_to_cpu(csb->nr_inodes);
 	sbi->nr_istore_blocks = le32_to_cpu(csb->nr_istore_blocks);
@@ -284,6 +290,9 @@ int ouichefs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->nr_free_inodes = le32_to_cpu(csb->nr_free_inodes);
 	sbi->nr_free_blocks = le32_to_cpu(csb->nr_free_blocks);
 	sbi->s_free_sliced_blocks = le32_to_cpu(csb->s_free_sliced_blocks);
+	sbi->nr_used_slices = le32_to_cpu(csb->nr_used_slices);
+	sbi->nr_sliced_blocks = le32_to_cpu(csb->nr_sliced_blocks);
+	
 	sbi->s_sb = sb;
 	sb->s_fs_info = sbi;
 	
